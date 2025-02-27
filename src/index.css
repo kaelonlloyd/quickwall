@@ -1,0 +1,63 @@
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #111;
+  font-family: Arial, sans-serif;
+  color: #fff;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+.ui-container {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 16px;
+  text-shadow: 1px 1px 2px black;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 10px;
+  border-radius: 5px;
+  z-index: 100;
+}
+
+.instructions {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  font-size: 14px;
+  text-shadow: 1px 1px 2px black;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 10px;
+  border-radius: 5px;
+  z-index: 100;
+}
+
+.build-menu {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  background-color: rgba(0, 0, 0, 0.7);
+  padding: 10px;
+  border-radius: 5px;
+  display: none;
+  z-index: 100;
+}
+
+.build-button {
+  padding: 8px 15px;
+  margin: 5px;
+  background-color: #8B4513;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.build-button:hover {
+  background-color: #A0522D;
+}

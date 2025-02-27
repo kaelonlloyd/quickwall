@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Age of Empires Style - Quick Wall Game</title>
+</head>
+<body>
+    <div class="ui-container">
+        <div>Wood: <span id="wood-count">100</span></div>
+        <div>Stone: <span id="stone-count">50</span></div>
+    </div>
+    <div class="instructions">
+        <p>Left-click: Select villager and set destination</p>
+        <p>Right-click: Open build menu when villager is selected</p>
+        <p>Press 'B': Build wall at villager's location (costs 5 wood, 2 stone)</p>
+    </div>
+    <div class="build-menu" id="build-menu">
+        <button class="build-button" id="build-wall">Build Wall (5 wood, 2 stone)</button>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
