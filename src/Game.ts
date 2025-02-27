@@ -114,13 +114,19 @@ export class Game {
   private initGame(): void {
     console.log("Game initialization started");
     
-    // Create initial villager at center of map
+    // Create initial villagers at nearby positions
     const startX = Math.floor(MAP_WIDTH / 2);
     const startY = Math.floor(MAP_HEIGHT / 2);
-    console.log("Creating villager at:", startX, startY);
+    console.log("Creating villagers at center area");
     
-    const villager = this.villagerManager.createVillager(startX, startY);
-    this.villagerManager.selectVillager(villager);
+    // Create the initial villager
+    const villager1 = this.villagerManager.createVillager(startX, startY);
+    this.villagerManager.selectVillager(villager1);
+    
+    // Create a few more villagers nearby
+    this.villagerManager.createVillager(startX - 1, startY);
+    this.villagerManager.createVillager(startX + 1, startY);
+    this.villagerManager.createVillager(startX, startY - 1);
     
     // Force position update for all containers
     if (this.app.renderer) {
@@ -139,6 +145,23 @@ export class Game {
       this.resourceManager.addResources(1, 1);
     }, 3000);
     
+    // Create selection count display
+    const selectionCountElement = document.createElement('div');
+    selectionCountElement.id = 'villager-selection-count';
+    selectionCountElement.textContent = 'Villagers: 1';
+    selectionCountElement.style.position = 'absolute';
+    selectionCountElement.style.bottom = '10px';
+    selectionCountElement.style.left = '10px';
+    selectionCountElement.style.color = 'white';
+    selectionCountElement.style.fontSize = '16px';
+    selectionCountElement.style.fontFamily = 'Arial';
+    selectionCountElement.style.textShadow = '1px 1px 1px black';
+    selectionCountElement.style.padding = '5px';
+    selectionCountElement.style.zIndex = '1000';
+    selectionCountElement.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    selectionCountElement.style.borderRadius = '3px';
+    document.body.appendChild(selectionCountElement);
+    
     console.log("Game initialization completed");
   }
 
@@ -148,6 +171,13 @@ export class Game {
       this.worldContainer.x = this.app.screen.width / 2;
       this.worldContainer.y = this.app.screen.height / 4;
       this.isoUtils.updateWorldPosition(this.worldContainer.x, this.worldContainer.y);
+      
+      // Update selection count display position
+      const selectionCountElement = document.getElementById('villager-selection-count');
+      if (selectionCountElement) {
+        selectionCountElement.style.bottom = '10px';
+        selectionCountElement.style.left = '10px';
+      }
     }
   }
 }

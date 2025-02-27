@@ -41,6 +41,11 @@ export interface VillagerTask {
 export interface Villager {
   sprite: PIXI.Container;
   selectionRing: PIXI.Graphics;
+  selectionFlag: PIXI.Graphics | null;  // Flag indicator for selection
+  selectionAnimation: any;  // For selection animation timer
+  healthBar: PIXI.Graphics;
+  health: number;
+  maxHealth: number;
   x: number;
   y: number;
   pixelX: number;
@@ -51,6 +56,10 @@ export interface Villager {
   speed: number;
   path: GridPosition[];
   task: VillagerTask | null;
+  
+  // Temporary properties for collision resolution
+  intendedX?: number;
+  intendedY?: number;
 }
 
 export interface GameState {

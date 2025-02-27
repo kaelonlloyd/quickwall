@@ -11,13 +11,16 @@
         <div>Stone: <span id="stone-count">50</span></div>
     </div>
     <div class="instructions">
-        <p>Left-click: Select villager and set destination</p>
-        <p>Right-click: Open build menu when villager is selected</p>
+        <p>Left-click: Select villager</p>
+        <p>Ctrl+Left-click: Add to selection</p>
+        <p>Click and drag: Select multiple villagers</p>
+        <p>Right-click: Move selected villagers or open build menu</p>
         <p>Press 'B': Build wall at villager's location (costs 5 wood, 2 stone)</p>
     </div>
     <div class="build-menu" id="build-menu">
         <button class="build-button" id="build-wall">Build Wall (5 wood, 2 stone)</button>
     </div>
+    <div id="villager-selection-count">Villagers: 0</div>
     <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

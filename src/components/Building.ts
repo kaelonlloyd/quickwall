@@ -1,5 +1,5 @@
 import { BUILDING_COSTS } from '../constants';
-import { BuildingCost, GridPosition } from '../types';
+import { GridPosition, Villager } from '../types';
 import { GameMap } from './Map';
 import { ResourceManager } from '../utils/ResourceManager';
 import { VillagerManager } from './Villager';
@@ -34,11 +34,13 @@ export class BuildingManager {
     // Set up keyboard shortcuts
     window.addEventListener('keydown', (e) => {
       if (e.key === 'b' || e.key === 'B') {
-        // Build wall at current location if villager is selected
-        const selectedVillager = this.villagerManager.getSelectedVillager();
-        if (selectedVillager) {
-          const x = Math.floor(selectedVillager.x);
-          const y = Math.floor(selectedVillager.y);
+        // Build wall at current location if villagers are selected
+        const selectedVillagers = this.villagerManager.getSelectedVillagers();
+        if (selectedVillagers.length > 0) {
+          // Get the first selected villager to build
+          const villager = selectedVillagers[0];
+          const x = Math.floor(villager.x);
+          const y = Math.floor(villager.y);
           
           // Try to build wall in the direction villager is facing
           // For now, just build in front of the villager
@@ -68,6 +70,33 @@ export class BuildingManager {
     this.buildMode = mode;
   }
   
+  public getClosestVillager(x: number, y: number): Villager | null {
+    const villagers = this.villagerManager.getSelectedVillagers();
+    if (villagers.length === 0) return null;
+    
+    // Find the closest villager to the target position
+    let closestVillager = villagers[0];
+    let closestDistance = this.getDistance(closestVillager.x, closestVillager.y, x, y);
+    
+    for (let i = 1; i < villagers.length; i++) {
+      const villager = villagers[i];
+      const distance = this.getDistance(villager.x, villager.y, x, y);
+      
+      if (distance < closestDistance) {
+        closestVillager = villager;
+        closestDistance = distance;
+      }
+    }
+    
+    return closestVillager;
+  }
+  
+  private getDistance(x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  
   public showBuildMenu(x: number, y: number): void {
     if (!this.buildMenu) return;
     
@@ -87,10 +116,12 @@ export class BuildingManager {
   }
   
   public buildAtLocation(type: string, x: number, y: number): boolean {
+    // Handle building based on type
     if (type === 'wall') {
       return this.buildWall(x, y);
     }
     
+    console.warn(`Unknown building type: ${type}`);
     return false;
   }
   
@@ -112,15 +143,20 @@ export class BuildingManager {
   
   public handleTileClick(x: number, y: number): void {
     // If we're in build mode, try to build at the location
-    if (this.buildMode) {
-      const selectedVillager = this.villagerManager.getSelectedVillager();
-      if (selectedVillager) {
-        if (this.villagerManager.isAdjacentToVillager(selectedVillager, x, y)) {
-          this.buildAtLocation(this.buildMode, x, y);
+    if (this.buildMode !== null) {
+      // Make a copy of the current build mode as a string
+      const buildModeType: string = this.buildMode;
+      
+      // Find the closest villager to the target position
+      const closestVillager = this.getClosestVillager(x, y);
+      
+      if (closestVillager) {
+        if (this.villagerManager.isAdjacentToVillager(closestVillager, x, y)) {
+          this.buildAtLocation(buildModeType, x, y);
         } else {
-          // Move villager near the target first
-          this.villagerManager.moveVillagerNear(selectedVillager, x, y, () => {
-            this.buildAtLocation(this.buildMode, x, y);
+          // Move the closest villager near the target first
+          this.villagerManager.moveVillagerNear(closestVillager, x, y, () => {
+            this.buildAtLocation(buildModeType, x, y);
           });
         }
         
