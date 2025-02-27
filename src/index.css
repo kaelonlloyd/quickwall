@@ -129,3 +129,19 @@ body {
 .pulse {
   animation: selectionPulse 1s infinite;
 }
+
+/* Existing styles */
+#mode-indicator {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  background-color: rgba(0,0,0,0.5);
+  color: white;
+  padding: 5px 10px;
+  border-radius: 3px;
+  font-size: 14px;
+  z-index: 1000;
+  transition: background-color 0.3s ease;
+}
+
+/* Add additional styles as needed */

@@ -2,17 +2,20 @@ import * as PIXI from 'pixi.js';
 import { COLORS, MAP_HEIGHT, MAP_WIDTH, TILE_HEIGHT, TILE_WIDTH, TILE_PROPERTIES } from '../constants';
 import { GridPosition, MapData, Tile, TileType } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
+import { WallManager, WallFoundation } from './WallManager';
 
 export class GameMap {
   private mapData: MapData;
   private groundLayer: PIXI.Container;
   private objectLayer: PIXI.Container;
   private isoUtils: IsometricUtils;
+  private wallManager: WallManager;
   
   constructor(groundLayer: PIXI.Container, objectLayer: PIXI.Container, isoUtils: IsometricUtils) {
     this.groundLayer = groundLayer;
     this.objectLayer = objectLayer;
     this.isoUtils = isoUtils;
+    this.wallManager = new WallManager(objectLayer, isoUtils);
     this.mapData = { tiles: [] };
     
     this.initMap();
@@ -239,19 +242,83 @@ export class GameMap {
   }
   
   public getAdjacentWalkableTile(x: number, y: number): GridPosition | null {
-    const roundedX = Math.round(x);
-    const roundedY = Math.round(y);
-    
-    const adjacentPositions = this.isoUtils.getAdjacentTiles(roundedX, roundedY);
-    
+    // Check map boundaries and ensure valid input
+    x = Math.floor(x);
+    y = Math.floor(y);
+
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
+      console.warn(`Invalid coordinates: x=${x}, y=${y}`);
+      return null;
+    }
+
+    // Define potential adjacent tiles
+    const adjacentPositions: GridPosition[] = [
+      { x: x - 1, y: y },     // Left
+      { x: x + 1, y: y },     // Right
+      { x: x, y: y - 1 },     // Top
+      { x: x, y: y + 1 },     // Bottom
+      { x: x - 1, y: y - 1 }, // Top-Left
+      { x: x + 1, y: y - 1 }, // Top-Right
+      { x: x - 1, y: y + 1 }, // Bottom-Left
+      { x: x + 1, y: y + 1 }  // Bottom-Right
+    ];
+
     // Find the first walkable adjacent tile
     for (const pos of adjacentPositions) {
       if (this.isTileWalkable(pos.x, pos.y)) {
         return pos;
       }
     }
-    
-    console.warn(`No walkable adjacent tile found near x=${roundedX}, y=${roundedY}`);
+
+    console.warn(`No walkable adjacent tile found near x=${x}, y=${y}`);
     return null;
   }
+
+
+  public getGroundLayerTiles(): PIXI.Graphics[] {
+    return this.groundLayer.children as PIXI.Graphics[];
+  }
+
+
+  
+  public addWallFoundation(x: number, y: number): WallFoundation | null {
+    // Check if we can place a wall here
+    if (!this.isTileWalkable(x, y)) {
+      console.warn(`Cannot add wall: tile is not walkable at x=${x}, y=${y}`);
+      return null;
+    }
+    
+    // Update tile data
+    this.mapData.tiles[y][x].type = TileType.WALL;
+    this.mapData.tiles[y][x].walkable = false;
+    
+    // Create wall foundation
+    return this.wallManager.createWallFoundation(x, y);
+  }
+  
+  public getWallFoundations(): WallFoundation[] {
+    return this.wallManager.getWallFoundations();
+  }
+  
+  public updateFoundationBuilding(delta: number): void {
+    this.wallManager.updateFoundationBuilding(delta);
+  }
+  
+  public findNearbyFoundation(x: number, y: number, maxDistance: number = 3): WallFoundation | null {
+    const foundations = this.getWallFoundations();
+    const unbuiltFoundations = foundations.filter(f => f.status !== 'complete');
+    
+    for (const foundation of unbuiltFoundations) {
+      const dx = Math.abs(foundation.x - x);
+      const dy = Math.abs(foundation.y - y);
+      const distance = Math.max(dx, dy);
+      
+      if (distance <= maxDistance) {
+        return foundation;
+      }
+    }
+    
+    return null;
+  }
+
 }

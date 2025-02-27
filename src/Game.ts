@@ -32,10 +32,6 @@ export class Game {
     this.initializeApp().catch(console.error);
   }
 
-  private gameLoop(ticker: PIXI.Ticker): void {
-    // Use ticker.deltaTime instead of a separate delta parameter
-    this.villagerManager.updateVillagers(ticker.deltaTime);
-  }
 
   private async initializeApp(): Promise<void> {
     // Initialize with options
@@ -179,5 +175,33 @@ export class Game {
         selectionCountElement.style.left = '10px';
       }
     }
+  }
+
+  private gameLoop(ticker: PIXI.Ticker): void {
+    // Update villagers' movement
+    this.villagerManager.updateVillagers(ticker.deltaTime);
+    
+    // Update wall foundation building
+    this.buildingManager.updateFoundationBuilding(ticker.deltaTime);
+  }
+  
+  // Update UI event listeners to pass shift key state
+  private setupEventListeners(): void {
+    // Keyboard event to track shift key
+    let isShiftDown = false;
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Shift') {
+        isShiftDown = true;
+      }
+    });
+    
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'Shift') {
+        isShiftDown = false;
+      }
+    });
+    
+    // Modify tile click handling in UI to pass shift key state
+    this.uiManager.setShiftKeyHandler(() => isShiftDown);
   }
 }

@@ -21,6 +21,9 @@ export class UIManager {
   private selectionEndY: number = 0;
   private isDragging: boolean = false;
   
+  // Shift key handler
+  private shiftKeyHandler: () => boolean = () => false;
+  
   constructor(
     app: PIXI.Application, 
     groundLayer: PIXI.Container, 
@@ -37,18 +40,40 @@ export class UIManager {
     
     // Create selection box
     this.selectionBox = new PIXI.Graphics();
-    this.selectionBox.zIndex = 1000; // Make sure it's visible above other elements
+    this.selectionBox.zIndex = 1000;
     this.app.stage.addChild(this.selectionBox);
     
     this.setupEventListeners();
   }
   
+  // Method to set the shift key handler from outside
+  public setShiftKeyHandler(handler: () => boolean): void {
+    this.shiftKeyHandler = handler;
+  }
+  
   private setupEventListeners(): void {
+    // Keyboard events
+    document.addEventListener('keydown', (e) => {
+      // ESC key to cancel build mode
+      if (e.key === 'Escape') {
+        this.buildingManager.setBuildMode(null);
+      }
+    });
+    
     // Selection box events
     document.addEventListener('mousedown', this.onMouseDown.bind(this));
     document.addEventListener('mousemove', this.onMouseMove.bind(this));
     document.addEventListener('mouseup', this.onMouseUp.bind(this));
     
+
+    document.addEventListener('contextmenu', (e) => {
+      // Prevent context menu for all right-clicks with any modifier
+      if (e.button === 2 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) {
+        e.preventDefault();
+        return false;
+      }
+    });
+
     // Set up interactive events on ground tiles
     for (let i = 0; i < this.groundLayer.children.length; i++) {
       const tile = this.groundLayer.children[i] as PIXI.Graphics;
@@ -58,21 +83,20 @@ export class UIManager {
       const tileY = (tile as any).tileY;
       
       if (tileX !== undefined && tileY !== undefined) {
-        // Add pointerdown event
         tile.on('pointerdown', (event) => {
-          // Check if left or right click
           const point = event.global;
-          
-          // Get the native event for modifier keys
           const nativeEvent = event.nativeEvent as PointerEvent;
           
-          console.log('Click event:', {
-            globalX: point.x, 
-            globalY: point.y,
-            tileX: tileX, 
-            tileY: tileY
-          });
-
+          // Check for wall build mode first
+          if (this.buildingManager.getBuildMode() === 'wall') {
+            // Check if shift key is down
+            const isShiftDown = this.shiftKeyHandler();
+            
+            this.buildingManager.handleTileClick(tileX, tileY, isShiftDown);
+            return;
+          }
+          
+          // Existing click handling
           if (event.button === 0) { // Left click
             // Check if Ctrl key is pressed for multi-selection
             const isCtrlPressed = nativeEvent.ctrlKey || nativeEvent.metaKey;
@@ -89,7 +113,13 @@ export class UIManager {
         // Add hover effects
         tile.on('pointerover', () => {
           this.hoveredTile = { x: tileX, y: tileY };
-          tile.tint = 0xDDDDDD;
+          
+          // If in wall build mode, provide visual feedback
+          if (this.buildingManager.getBuildMode() === 'wall') {
+            tile.tint = 0xAAAAAA; // Slightly grey to indicate potential build
+          } else {
+            tile.tint = 0xDDDDDD;
+          }
         });
         
         tile.on('pointerout', () => {
@@ -98,36 +128,6 @@ export class UIManager {
         });
       }
     }
-    
-    // Global click event as a fallback
-    this.app.stage.on('pointerdown', (event) => {
-      const point = event.global;
-      const nativeEvent = event.nativeEvent as PointerEvent;
-      
-      try {
-        // Use IsometricUtils to convert screen coordinates
-        const worldX = this.app.stage.x || 0;
-        const worldY = this.app.stage.y || 0;
-        
-        const gridPos = this.villagerManager.getIsoUtils().toIso(point.x - worldX, point.y - worldY);
-        
-        console.log('Global click converted to grid:', gridPos);
-        
-        if (gridPos.x !== undefined && gridPos.y !== undefined) {
-          // Check if Ctrl key is pressed for multi-selection
-          const isCtrlPressed = nativeEvent.ctrlKey || nativeEvent.metaKey;
-          
-          // Only process left clicks if not dragging
-          if (event.button === 0 && !this.isDragging) { 
-            this.handleLeftClick(gridPos.x, gridPos.y, isCtrlPressed);
-          } else if (event.button === 2) { // Right click
-            this.handleRightClick(gridPos.x, gridPos.y, point.x, point.y);
-          }
-        }
-      } catch (error) {
-        console.error('Error converting coordinates:', error);
-      }
-    });
     
     // Prevent right-click context menu
     this.app.view.addEventListener('contextmenu', (e) => {

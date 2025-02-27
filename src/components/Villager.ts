@@ -1,8 +1,10 @@
 import * as PIXI from 'pixi.js';
 import { COLORS, TILE_HEIGHT, TILE_WIDTH, VILLAGER_SPEED } from '../constants';
-import { GridPosition, Villager, VillagerTask } from '../types';
+import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { GameMap } from './Map';
+import { WallFoundation } from './WallManager';
+import {PathFinder} from '../utils/pathfinding';
 
 export class VillagerManager {
   private villagers: Villager[];
@@ -17,42 +19,25 @@ export class VillagerManager {
     this.unitLayer = unitLayer;
     this.isoUtils = isoUtils;
     this.selectedVillagers = [];
-    this.gameMap = gameMap;
+    this.gameMap = gameMap; 
     
-    // Create selection count text
-    this.selectionCountText = new PIXI.Text('Villagers: 0', {
-      fontSize: 16,
-      fill: 0xFFFFFF,
-      fontFamily: 'Arial',
-      dropShadow: {
-        alpha: 1,
-        angle: Math.PI / 6,
-        blur: 2,
-        color: 0x000000,
-        distance: 3
-      }
-    });
-    this.selectionCountText.x = 10;
-    this.selectionCountText.y = window.innerHeight - 40;
+    // Create selection count text for DOM
     document.addEventListener('DOMContentLoaded', () => {
-      const app = document.querySelector('canvas');
-      if (app && app.parentNode) {
-        const textContainer = document.createElement('div');
-        textContainer.style.position = 'absolute';
-        textContainer.style.bottom = '10px';
-        textContainer.style.left = '10px';
-        textContainer.style.color = 'white';
-        textContainer.style.fontSize = '16px';
-        textContainer.style.fontFamily = 'Arial';
-        textContainer.style.textShadow = '1px 1px 1px black';
-        textContainer.style.padding = '5px';
-        textContainer.style.zIndex = '1000';
-        textContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        textContainer.style.borderRadius = '3px';
-        textContainer.id = 'villager-selection-count';
-        textContainer.textContent = 'Villagers: 0';
-        app.parentNode.appendChild(textContainer);
-      }
+      const textContainer = document.createElement('div');
+      textContainer.style.position = 'absolute';
+      textContainer.style.bottom = '10px';
+      textContainer.style.left = '10px';
+      textContainer.style.color = 'white';
+      textContainer.style.fontSize = '16px';
+      textContainer.style.fontFamily = 'Arial';
+      textContainer.style.textShadow = '1px 1px 1px black';
+      textContainer.style.padding = '5px';
+      textContainer.style.zIndex = '1000';
+      textContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+      textContainer.style.borderRadius = '3px';
+      textContainer.id = 'villager-selection-count';
+      textContainer.textContent = 'Villagers: 0';
+      document.body.appendChild(textContainer);
     });
   }
   
@@ -245,7 +230,6 @@ export class VillagerManager {
     // Add click event
     villagerContainer.on('pointerdown', (event) => {
       // Access the native event for checking modifier keys
-      // In PIXI v8, we need to access the native event differently
       const nativeEvent = event.nativeEvent as PointerEvent;
       const isCtrlPressed = nativeEvent.ctrlKey || nativeEvent.metaKey;
       
@@ -285,22 +269,47 @@ export class VillagerManager {
     const clampedX = Math.max(0, Math.min(targetX, 19));
     const clampedY = Math.max(0, Math.min(targetY, 19));
     
+    // Find path to target
+    const pathFinder = new PathFinder(this.gameMap);
+    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY);
+    
+    // If no path found, try to get adjacent walkable tile
+    if (path.length === 0) {
+      const adjacentTile = this.gameMap.getAdjacentWalkableTile(clampedX, clampedY);
+      if (adjacentTile) {
+        const newPath = pathFinder.findPath(villager.x, villager.y, adjacentTile.x, adjacentTile.y);
+        if (newPath.length > 0) {
+          path.push(...newPath);
+        }
+      }
+    }
+    
+    // No path found at all
+    if (path.length === 0) {
+      console.warn('Unable to find path to target', { targetX, targetY });
+      return;
+    }
+    
+    // Use the final position from the path
+    const finalTarget = path[path.length - 1];
+    
     // Set target position
-    villager.targetX = clampedX;
-    villager.targetY = clampedY;
+    villager.targetX = finalTarget.x;
+    villager.targetY = finalTarget.y;
     villager.moving = true;
+    villager.path = path;
     
     // Set callback to execute when destination reached
     if (callback) {
       villager.task = {
         type: 'move',
-        target: { x: clampedX, y: clampedY },
+        target: { x: finalTarget.x, y: finalTarget.y },
         callback
       };
     } else {
       villager.task = {
         type: 'move',
-        target: { x: clampedX, y: clampedY }
+        target: { x: finalTarget.x, y: finalTarget.y }
       };
     }
   }
@@ -371,14 +380,94 @@ export class VillagerManager {
   }
   
   public moveVillagerNear(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
-    // Find an adjacent walkable tile
-    const adjacentTile = this.gameMap.getAdjacentWalkableTile(targetX, targetY);
-    
-    if (adjacentTile) {
-      this.moveVillager(villager, adjacentTile.x, adjacentTile.y, callback);
-    } else {
-      console.warn('No walkable adjacent tile found', { targetX, targetY });
+    // Potential adjacent tiles around the foundation
+    const potentialTiles: GridPosition[] = [
+      { x: targetX - 1, y: targetY },     // Left
+      { x: targetX + 1, y: targetY },     // Right
+      { x: targetX, y: targetY - 1 },     // Top
+      { x: targetX, y: targetY + 1 },     // Bottom
+      { x: targetX - 1, y: targetY - 1 }, // Top-Left
+      { x: targetX + 1, y: targetY - 1 }, // Top-Right
+      { x: targetX - 1, y: targetY + 1 }, // Bottom-Left
+      { x: targetX + 1, y: targetY + 1 }  // Bottom-Right
+    ];
+
+    // Find all walkable tiles
+    const walkableTiles = potentialTiles.filter(tile => 
+      tile.x >= 0 && tile.x < 20 && 
+      tile.y >= 0 && tile.y < 20 && 
+      this.gameMap.isTileWalkable(tile.x, tile.y)
+    );
+
+    // If no walkable tiles, log error and return
+    if (walkableTiles.length === 0) {
+      console.error('No walkable tiles found near foundation', { targetX, targetY });
+      return;
     }
+
+    // Precise distance calculation with multiple tie-breakers
+    const closestTile = walkableTiles.reduce((closest, current) => {
+      // Euclidean distance
+      const closestDist = Math.sqrt(
+        Math.pow(closest.x - targetX, 2) + Math.pow(closest.y - targetY, 2)
+      );
+      const currentDist = Math.sqrt(
+        Math.pow(current.x - targetX, 2) + Math.pow(current.y - targetY, 2)
+      );
+
+      // Compare distances with multiple tie-breakers
+      if (currentDist < closestDist) return current;
+      if (currentDist > closestDist) return closest;
+
+      // If distances are equal, prefer tiles closer to villager's current position
+      const closestVillagerDist = Math.sqrt(
+        Math.pow(closest.x - villager.x, 2) + Math.pow(closest.y - villager.y, 2)
+      );
+      const currentVillagerDist = Math.sqrt(
+        Math.pow(current.x - villager.x, 2) + Math.pow(current.y - villager.y, 2)
+      );
+
+      // If villager distances are equal, prefer bottom-right quadrant
+      if (currentVillagerDist < closestVillagerDist) return current;
+      if (currentVillagerDist > closestVillagerDist) return closest;
+
+      // Final tie-breaker: prefer bottom-right
+      return (current.x > closest.x || current.y > closest.y) ? current : closest;
+    });
+
+    // Move to the closest walkable tile
+    this.moveVillager(villager, closestTile.x, closestTile.y, callback);
+  }
+
+  private findClosestWalkableTileToFoundation(foundationX: number, foundationY: number): GridPosition | null {
+    // Array of potential adjacent tiles, prioritized by closeness
+    const potentialTiles: GridPosition[] = [
+      { x: foundationX - 1, y: foundationY },     // Left
+      { x: foundationX + 1, y: foundationY },     // Right
+      { x: foundationX, y: foundationY - 1 },     // Top
+      { x: foundationX, y: foundationY + 1 },     // Bottom
+      { x: foundationX - 1, y: foundationY - 1 }, // Top-Left
+      { x: foundationX + 1, y: foundationY - 1 }, // Top-Right
+      { x: foundationX - 1, y: foundationY + 1 }, // Bottom-Left
+      { x: foundationX + 1, y: foundationY + 1 }  // Bottom-Right
+    ];
+    
+    // Find the first walkable tile, sorted by proximity to the foundation
+    const walkableTiles = potentialTiles.filter(tile => 
+      tile.x >= 0 && tile.x < 20 && 
+      tile.y >= 0 && tile.y < 20 && 
+      this.gameMap.isTileWalkable(tile.x, tile.y)
+    );
+    
+    // If no walkable tiles, return null
+    if (walkableTiles.length === 0) return null;
+    
+    // Sort walkable tiles by distance to foundation
+    return walkableTiles.sort((a, b) => {
+      const distA = Math.abs(a.x - foundationX) + Math.abs(a.y - foundationY);
+      const distB = Math.abs(b.x - foundationX) + Math.abs(b.y - foundationY);
+      return distA - distB;
+    })[0];
   }
   
   public updateVillagers(delta: number): void {
@@ -387,107 +476,30 @@ export class VillagerManager {
     
     // Process movement for all villagers first
     for (const villager of this.villagers) {
-      if (villager.moving) {
-        // Validate target coordinates
-        if (isNaN(villager.targetX) || isNaN(villager.targetY)) {
-          console.error('Invalid target coordinates during update', {
-            targetX: villager.targetX, 
-            targetY: villager.targetY
-          });
-          villager.moving = false;
-          continue;
-        }
-
-        // Calculate direction to target
-        const dx = villager.targetX - villager.x;
-        const dy = villager.targetY - villager.y;
+      if (villager.moving && villager.path && villager.path.length > 0) {
+        // Get next waypoint in the path
+        const nextWaypoint = villager.path[0];
+        
+        // Calculate direction to next waypoint
+        const dx = nextWaypoint.x - villager.x;
+        const dy = nextWaypoint.y - villager.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
+        // If very close to waypoint, move to it exactly
         if (distance < 0.1) {
-          // Target reached
-          villager.x = villager.targetX;
-          villager.y = villager.targetY;
-          villager.moving = false;
+          villager.x = nextWaypoint.x;
+          villager.y = nextWaypoint.y;
+          
+          // Remove this waypoint from path
+          villager.path.shift();
           
           // Update sprite position
           const pos = this.isoUtils.toScreen(villager.x, villager.y);
           villager.sprite.x = pos.x;
           villager.sprite.y = pos.y;
           
-          // Execute callback if exists
-          if (villager.task && villager.task.callback) {
-            const callback = villager.task.callback;
-            villager.task = null;
-            callback();
-          }
-          
-          movedVillagers.add(villager);
-        } else {
-          // Potential new position calculation
-          const speed = villager.speed * delta / 60;
-          const moveDistance = Math.min(distance, speed);
-          const angle = Math.atan2(dy, dx);
-          
-          // Calculate new position
-          let newX = villager.x + Math.cos(angle) * moveDistance;
-          let newY = villager.y + Math.sin(angle) * moveDistance;
-          
-          // Store the intended position
-          villager.intendedX = newX;
-          villager.intendedY = newY;
-        }
-      }
-    }
-    
-    // Now resolve collisions between villagers
-    for (const villager of this.villagers) {
-      if (villager.moving && !movedVillagers.has(villager)) {
-        if (villager.intendedX === undefined || villager.intendedY === undefined) {
-          continue;
-        }
-        
-        const newX = villager.intendedX;
-        const newY = villager.intendedY;
-        
-        // Validate and round coordinates
-        const nextX = Math.floor(newX);
-        const nextY = Math.floor(newY);
-        
-        // Check if the position is walkable on the map
-        if (!this.gameMap.isTileWalkable(nextX, nextY)) {
-          villager.moving = false;
-          continue;
-        }
-        
-        // Check for collisions with other villagers at the intended position
-        const collidingVillagers = this.findCollidingVillagers(newX, newY, villager);
-        
-        if (collidingVillagers.length === 0) {
-          // No collision, safe to move
-          villager.x = newX;
-          villager.y = newY;
-          
-          // Update sprite position
-          const pos = this.isoUtils.toScreen(villager.x, villager.y);
-          villager.sprite.x = pos.x;
-          villager.sprite.y = pos.y;
-          
-          movedVillagers.add(villager);
-        } else {
-          // We have a collision
-          let canMove = false;
-          
-          // If all colliding villagers are already at their target position,
-          // consider this one "arrived" if it's close enough
-          const allAtTarget = collidingVillagers.every(v => !v.moving);
-          
-          // Calculate distance to target
-          const dx = villager.targetX - villager.x;
-          const dy = villager.targetY - villager.y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
-          
-          if (allAtTarget && distance < 1.0) {
-            // Consider the villager has reached its destination
+          // If path is now empty, we've reached destination
+          if (villager.path.length === 0) {
             villager.moving = false;
             
             // Execute callback if exists
@@ -498,127 +510,107 @@ export class VillagerManager {
             }
             
             movedVillagers.add(villager);
-          } else {
-            // Try to find an alternative path around the obstacle
-            const alternativePath = this.findAlternativePath(villager, collidingVillagers);
+          }
+        } else {
+          // Move towards waypoint
+          const speed = villager.speed * delta / 60;
+          const moveDistance = Math.min(distance, speed);
+          const angle = Math.atan2(dy, dx);
+          
+          // Calculate new position
+          let newX = villager.x + Math.cos(angle) * moveDistance;
+          let newY = villager.y + Math.sin(angle) * moveDistance;
+          
+          // Validate and update position
+          const nextX = Math.floor(newX);
+          const nextY = Math.floor(newY);
+          
+          // Check if the position is walkable
+          if (this.gameMap.isTileWalkable(nextX, nextY)) {
+            villager.x = newX;
+            villager.y = newY;
             
-            if (alternativePath) {
-              villager.x = alternativePath.x;
-              villager.y = alternativePath.y;
-              
-              // Update sprite position
-              const pos = this.isoUtils.toScreen(villager.x, villager.y);
-              villager.sprite.x = pos.x;
-              villager.sprite.y = pos.y;
-              
-              movedVillagers.add(villager);
-            } else {
-              // If we couldn't find any valid movement, wait in place
-              // Don't stop movement altogether, just wait for a frame
-            }
+            // Update sprite position
+            const pos = this.isoUtils.toScreen(villager.x, villager.y);
+            villager.sprite.x = pos.x;
+            villager.sprite.y = pos.y;
           }
         }
       }
     }
     
-    // Clear intended positions after processing
-    for (const villager of this.villagers) {
-      delete villager.intendedX;
-      delete villager.intendedY;
-    }
+    // Build task handling
+    this.handleVillagerBuildTasks(delta);
   }
   
-  private findCollidingVillagers(x: number, y: number, currentVillager: Villager): Villager[] {
-    const collidingVillagers: Villager[] = [];
-    const tolerance = 0.4; // Slightly reduced collision radius
-    
-    for (const villager of this.villagers) {
-      if (villager === currentVillager) continue;
-      
-      const dx = Math.abs(villager.x - x);
-      const dy = Math.abs(villager.y - y);
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      
-      if (distance < tolerance) {
-        collidingVillagers.push(villager);
-      }
-    }
-    
-    return collidingVillagers;
-  }
-  
-  private findAlternativePath(
-    villager: Villager,
-    obstacles: Villager[]
-  ): { x: number, y: number } | null {
-    // Get the direction to the target
-    const dx = villager.targetX - villager.x;
-    const dy = villager.targetY - villager.y;
-    const originalAngle = Math.atan2(dy, dx);
-    
-    // Try different angles to find a clear path
-    const angleOffsets = [
-      Math.PI / 12, -Math.PI / 12,  // Small angles first
-      Math.PI / 8, -Math.PI / 8,    // Slightly larger angles
-      Math.PI / 6, -Math.PI / 6,    // Even larger
-      Math.PI / 4, -Math.PI / 4     // Largest turn angles
-    ];
-    
-    // Try each angle offset
-    for (const offset of angleOffsets) {
-      const newAngle = originalAngle + offset;
-      const moveDistance = 0.1; // Small step size
-      
-      const newX = villager.x + Math.cos(newAngle) * moveDistance;
-      const newY = villager.y + Math.sin(newAngle) * moveDistance;
-      
-      // Check if this new position collides with any obstacles
-      if (
-        this.gameMap.isTileWalkable(Math.floor(newX), Math.floor(newY)) && 
-        this.findCollidingVillagers(newX, newY, villager).length === 0
-      ) {
-        return { x: newX, y: newY };
-      }
-    }
-    
-    // As a fallback, try to move away from all obstacles
-    if (obstacles.length > 0) {
-      let avoidX = 0;
-      let avoidY = 0;
-      
-      // Calculate average direction to move away from obstacles
-      for (const obstacle of obstacles) {
-        avoidX += villager.x - obstacle.x;
-        avoidY += villager.y - obstacle.y;
-      }
-      
-      // Normalize the avoidance vector
-      const avoidMagnitude = Math.sqrt(avoidX * avoidX + avoidY * avoidY);
-      if (avoidMagnitude > 0) {
-        avoidX /= avoidMagnitude;
-        avoidY /= avoidMagnitude;
+  private handleVillagerBuildTasks(delta: number): void {
+    this.villagers.forEach(villager => {
+      // Check if villager has a current build task
+      if (villager.currentBuildTask && villager.currentBuildTask.type === 'wall') {
+        const foundation = villager.currentBuildTask.foundation;
         
-        // Try to move a small step in the avoidance direction
-        const newX = villager.x + avoidX * 0.05;
-        const newY = villager.y + avoidY * 0.05;
+        // Find the corresponding wall foundation in the game map
+        const wallFoundations = this.gameMap.getWallFoundations();
+        const matchingFoundation = wallFoundations.find(
+          f => f.x === foundation.x && f.y === foundation.y
+        );
         
-        if (
-          this.gameMap.isTileWalkable(Math.floor(newX), Math.floor(newY)) && 
-          this.findCollidingVillagers(newX, newY, villager).length === 0
-        ) {
-          return { x: newX, y: newY };
+        // Check if villager is adjacent to the foundation
+        if (matchingFoundation && this.isAdjacentToFoundation(villager, matchingFoundation)) {
+          // Villager is next to the foundation, start building
+          matchingFoundation.isBuilding = true;
         }
       }
-    }
-    
-    return null; // No valid alternative found
+    });
+  }
+  
+  
+  public getAllVillagers(): Villager[] {
+    return this.villagers;
   }
   
   public isAdjacentToVillager(villager: Villager, x: number, y: number): boolean {
     return this.isoUtils.isAdjacentToVillager(villager, x, y);
   }
-  
-  public getAllVillagers(): Villager[] {
-    return this.villagers;
+
+  private isAdjacentToFoundation(villager: Villager, foundation: WallFoundation): boolean {
+    const dx = Math.abs(villager.x - foundation.x);
+    const dy = Math.abs(villager.y - foundation.y);
+    
+    // Check if villager is in an adjacent tile in any direction
+    const isAdjacent = (
+      (dx <= 1 && dy <= 1) && // Within adjacent tiles
+      !(dx === 0 && dy === 0) // Not on the same exact tile
+    );
+    
+    if (!isAdjacent) return false;
+    
+    // Find the closest edge of the foundation
+    const closestEdge = this.findClosestFoundationEdge(villager, foundation);
+    
+    return closestEdge !== null;
   }
+  
+  private findClosestFoundationEdge(villager: Villager, foundation: WallFoundation): { x: number, y: number } | null {
+    // Possible adjacent positions relative to foundation
+    const adjacentPositions = [
+      { x: foundation.x - 1, y: foundation.y },     // Left
+      { x: foundation.x + 1, y: foundation.y },     // Right
+      { x: foundation.x, y: foundation.y - 1 },     // Top
+      { x: foundation.x, y: foundation.y + 1 },     // Bottom
+      { x: foundation.x - 1, y: foundation.y - 1 }, // Top-Left
+      { x: foundation.x + 1, y: foundation.y - 1 }, // Top-Right
+      { x: foundation.x - 1, y: foundation.y + 1 }, // Bottom-Left
+      { x: foundation.x + 1, y: foundation.y + 1 }  // Bottom-Right
+    ];
+    
+    // Find the closest adjacent position to the villager
+    return adjacentPositions.find(pos => 
+      Math.abs(villager.x - pos.x) <= 1 && 
+      Math.abs(villager.y - pos.y) <= 1 &&
+      this.gameMap.isTileWalkable(pos.x, pos.y)
+    ) || null;
+  }
+  
+
 }

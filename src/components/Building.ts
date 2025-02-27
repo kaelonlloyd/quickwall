@@ -1,168 +1,177 @@
 import { BUILDING_COSTS } from '../constants';
-import { GridPosition, Villager } from '../types';
+import { Villager, BuildTask, WallFoundationData } from '../types';
 import { GameMap } from './Map';
 import { ResourceManager } from '../utils/ResourceManager';
 import { VillagerManager } from './Villager';
+import { WallFoundation } from './WallManager';
 
 export class BuildingManager {
   private gameMap: GameMap;
   private resourceManager: ResourceManager;
   private villagerManager: VillagerManager;
-  private buildMode: string | null;
+  private buildMode: 'wall' | 'walk' | null = 'walk';
   private buildMenu: HTMLElement;
+  private modeIndicator: HTMLElement;
   
   constructor(gameMap: GameMap, resourceManager: ResourceManager, villagerManager: VillagerManager) {
     this.gameMap = gameMap;
     this.resourceManager = resourceManager;
     this.villagerManager = villagerManager;
-    this.buildMode = null;
     this.buildMenu = document.getElementById('build-menu') as HTMLElement;
+    
+    // Create mode indicator
+    this.modeIndicator = document.createElement('div');
+    this.modeIndicator.id = 'mode-indicator';
+    this.modeIndicator.style.position = 'fixed';
+    this.modeIndicator.style.top = '10px';
+    this.modeIndicator.style.right = '10px';
+    this.modeIndicator.style.backgroundColor = 'rgba(0,0,0,0.5)';
+    this.modeIndicator.style.color = 'white';
+    this.modeIndicator.style.padding = '5px 10px';
+    this.modeIndicator.style.borderRadius = '3px';
+    this.modeIndicator.textContent = 'Mode: Walk';
+    document.body.appendChild(this.modeIndicator);
     
     this.setupEventListeners();
   }
   
   private setupEventListeners(): void {
-    // Set up build menu button events
+    // Wall building mode toggle
     const buildWallButton = document.getElementById('build-wall');
     if (buildWallButton) {
       buildWallButton.addEventListener('click', () => {
-        this.setBuildMode('wall');
-        this.hideBuildMenu();
+        const selectedVillagers = this.villagerManager.getSelectedVillagers();
+        if (selectedVillagers.length > 0) {
+          this.setBuildMode('wall');
+        }
       });
     }
     
-    // Set up keyboard shortcuts
+    // Keyboard shortcut
     window.addEventListener('keydown', (e) => {
+      // Trigger wall build mode with 'b' or 'B'
       if (e.key === 'b' || e.key === 'B') {
-        // Build wall at current location if villagers are selected
         const selectedVillagers = this.villagerManager.getSelectedVillagers();
         if (selectedVillagers.length > 0) {
-          // Get the first selected villager to build
-          const villager = selectedVillagers[0];
-          const x = Math.floor(villager.x);
-          const y = Math.floor(villager.y);
-          
-          // Try to build wall in the direction villager is facing
-          // For now, just build in front of the villager
-          const targetX = x + 1;
-          const targetY = y;
-          
-          this.buildWall(targetX, targetY);
+          this.setBuildMode('wall');
         }
       }
-    });
-    
-    // Hide build menu when clicking elsewhere
-    document.addEventListener('click', (e) => {
-      if (e.target !== this.buildMenu && 
-          this.buildMenu && 
-          !this.buildMenu.contains(e.target as Node)) {
-        this.hideBuildMenu();
+      
+      // Reset to walk mode with 'Escape'
+      if (e.key === 'Escape') {
+        this.setBuildMode(null);
       }
     });
   }
   
-  public getBuildMode(): string | null {
+  public setBuildMode(mode: 'wall' | null): void {
+    // If mode is null, default to walk mode
+    this.buildMode = mode === 'wall' ? 'wall' : 'walk';
+    
+    // Update mode indicator
+    if (this.modeIndicator) {
+      this.modeIndicator.textContent = mode === 'wall' ? 'Mode: Build Wall' : 'Mode: Walk';
+      this.modeIndicator.style.backgroundColor = mode === 'wall' 
+        ? 'rgba(255,165,0,0.7)' // Orange for build mode
+        : 'rgba(0,0,0,0.5)';   // Default for walk mode
+    }
+    
+    // Update build wall button style
+    const buildWallButton = document.getElementById('build-wall');
+    if (buildWallButton) {
+      buildWallButton.classList.toggle('active', mode === 'wall');
+    }
+    
+    // If switching to walk mode, clear any build state
+    if (mode !== 'wall') {
+      // Reset any pending build mode visuals
+      const tiles = this.gameMap.getGroundLayerTiles();
+      tiles.forEach(tile => {
+        tile.tint = 0xFFFFFF;
+      });
+    }
+  }
+  
+  public getBuildMode(): 'wall' | 'walk' | null {
     return this.buildMode;
   }
   
-  public setBuildMode(mode: string | null): void {
-    this.buildMode = mode;
+  private assignVillagersToFoundation(villagers: Villager[], foundation: WallFoundation): void {
+    villagers.forEach(villager => {
+      // Convert WallFoundation to WallFoundationData
+      const foundationData: WallFoundationData = {
+        x: foundation.x,
+        y: foundation.y,
+        health: foundation.health,
+        maxHealth: foundation.maxHealth,
+        assignedVillagers: foundation.assignedVillagers,
+        isBuilding: foundation.isBuilding,
+        buildProgress: foundation.buildProgress,
+        status: foundation.status
+      };
+
+      // Move villager near the foundation
+      this.villagerManager.moveVillagerNear(villager, foundation.x, foundation.y, () => {
+        // Once near, assign build task
+        const buildTask: BuildTask = {
+          type: 'wall',
+          foundation: foundationData
+        };
+        
+        villager.currentBuildTask = buildTask;
+        
+        // Add villager to foundation's assigned villagers
+        foundation.assignedVillagers.push(villager);
+      });
+    });
   }
   
-  public getClosestVillager(x: number, y: number): Villager | null {
-    const villagers = this.villagerManager.getSelectedVillagers();
-    if (villagers.length === 0) return null;
+  public handleTileClick(x: number, y: number, isShiftDown: boolean = false): void {
+    // Ensure we're in wall build mode and have selected villagers
+    if (this.buildMode !== 'wall') return;
     
-    // Find the closest villager to the target position
-    let closestVillager = villagers[0];
-    let closestDistance = this.getDistance(closestVillager.x, closestVillager.y, x, y);
+    const selectedVillagers = this.villagerManager.getSelectedVillagers();
+    if (selectedVillagers.length === 0) return;
     
-    for (let i = 1; i < villagers.length; i++) {
-      const villager = villagers[i];
-      const distance = this.getDistance(villager.x, villager.y, x, y);
-      
-      if (distance < closestDistance) {
-        closestVillager = villager;
-        closestDistance = distance;
-      }
+    // Check resources
+    if (!this.resourceManager.hasEnoughResources(BUILDING_COSTS.wall)) {
+      console.warn('Not enough resources to build wall');
+      return;
     }
     
-    return closestVillager;
+    // Place wall foundation
+    const foundation = this.gameMap.addWallFoundation(x, y);
+    if (!foundation) return;
+    
+    // Deduct resources
+    this.resourceManager.deductResources(BUILDING_COSTS.wall);
+    
+    // Assign selected villagers to build
+    this.assignVillagersToFoundation(selectedVillagers, foundation);
+    
+    // Reset build mode if not holding shift
+    if (!isShiftDown) {
+      this.setBuildMode(null);
+    }
   }
   
-  private getDistance(x1: number, y1: number, x2: number, y2: number): number {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    return Math.sqrt(dx * dx + dy * dy);
+  public updateFoundationBuilding(delta: number): void {
+    this.gameMap.updateFoundationBuilding(delta);
   }
   
   public showBuildMenu(x: number, y: number): void {
     if (!this.buildMenu) return;
     
+    // Check if there are selected villagers
+    const selectedVillagers = this.villagerManager.getSelectedVillagers();
+    if (selectedVillagers.length === 0) return;
+    
     // Position menu near the mouse
-    const menuX = Math.min(window.innerWidth - 150, x);
-    const menuY = Math.min(window.innerHeight - 100, y);
+    const menuX = Math.min(window.innerWidth - 200, x);
+    const menuY = Math.min(window.innerHeight - 150, y);
     
     this.buildMenu.style.left = menuX + 'px';
     this.buildMenu.style.top = menuY + 'px';
     this.buildMenu.style.display = 'block';
-  }
-  
-  public hideBuildMenu(): void {
-    if (this.buildMenu) {
-      this.buildMenu.style.display = 'none';
-    }
-  }
-  
-  public buildAtLocation(type: string, x: number, y: number): boolean {
-    // Handle building based on type
-    if (type === 'wall') {
-      return this.buildWall(x, y);
-    }
-    
-    console.warn(`Unknown building type: ${type}`);
-    return false;
-  }
-  
-  public buildWall(x: number, y: number): boolean {
-    // Check resources
-    if (!this.resourceManager.hasEnoughResources(BUILDING_COSTS.wall)) {
-      return false;
-    }
-    
-    // Try to place the wall
-    if (this.gameMap.addWall(x, y)) {
-      // Deduct resources on success
-      this.resourceManager.deductResources(BUILDING_COSTS.wall);
-      return true;
-    }
-    
-    return false;
-  }
-  
-  public handleTileClick(x: number, y: number): void {
-    // If we're in build mode, try to build at the location
-    if (this.buildMode !== null) {
-      // Make a copy of the current build mode as a string
-      const buildModeType: string = this.buildMode;
-      
-      // Find the closest villager to the target position
-      const closestVillager = this.getClosestVillager(x, y);
-      
-      if (closestVillager) {
-        if (this.villagerManager.isAdjacentToVillager(closestVillager, x, y)) {
-          this.buildAtLocation(buildModeType, x, y);
-        } else {
-          // Move the closest villager near the target first
-          this.villagerManager.moveVillagerNear(closestVillager, x, y, () => {
-            this.buildAtLocation(buildModeType, x, y);
-          });
-        }
-        
-        // Clear build mode after building attempt
-        this.buildMode = null;
-      }
-    }
   }
 }

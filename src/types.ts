@@ -7,10 +7,31 @@ export enum TileType {
   STONE = 3
 }
 
+export interface GridPosition {
+  x: number;
+  y: number;
+}
+
+export interface WallFoundationData {
+  x: number;
+  y: number;
+  health: number;
+  maxHealth: number;
+  assignedVillagers: any[];
+  isBuilding: boolean;
+  buildProgress: number;
+  status: 'foundation' | 'building' | 'complete';
+}
+
+export interface BuildTask {
+  type: 'wall';
+  foundation: WallFoundationData;
+}
+
 export interface Tile {
   type: TileType;
   walkable: boolean;
-  sprite: PIXI.DisplayObject | PIXI.Graphics | null;
+  sprite: PIXI.DisplayObject | null;
 }
 
 export interface MapData {
@@ -18,11 +39,6 @@ export interface MapData {
 }
 
 export interface Position {
-  x: number;
-  y: number;
-}
-
-export interface GridPosition {
   x: number;
   y: number;
 }
@@ -41,8 +57,8 @@ export interface VillagerTask {
 export interface Villager {
   sprite: PIXI.Container;
   selectionRing: PIXI.Graphics;
-  selectionFlag: PIXI.Graphics | null;  // Flag indicator for selection
-  selectionAnimation: any;  // For selection animation timer
+  selectionFlag: PIXI.Graphics | null;
+  selectionAnimation: any;
   healthBar: PIXI.Graphics;
   health: number;
   maxHealth: number;
@@ -56,10 +72,7 @@ export interface Villager {
   speed: number;
   path: GridPosition[];
   task: VillagerTask | null;
-  
-  // Temporary properties for collision resolution
-  intendedX?: number;
-  intendedY?: number;
+  currentBuildTask?: BuildTask;
 }
 
 export interface GameState {
