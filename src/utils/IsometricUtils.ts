@@ -24,14 +24,14 @@ export class IsometricUtils {
   }
 
   // Convert screen coordinates to isometric grid coordinates
-  public toIso(x: number, y: number): GridPosition {
+  public toIso(screenX: number, screenY: number): GridPosition {
     // Adjust coordinates relative to world container
-    x -= this.worldX;
-    y -= this.worldY;
+    const adjustedX = screenX - this.worldX;
+    const adjustedY = screenY - this.worldY;
     
     // Convert to tile coordinates
-    const tileX = (x / (TILE_WIDTH / 2) + y / (TILE_HEIGHT / 2)) / 2;
-    const tileY = (y / (TILE_HEIGHT / 2) - x / (TILE_WIDTH / 2)) / 2;
+    const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
+    const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
     
     return {
       x: Math.floor(tileX),

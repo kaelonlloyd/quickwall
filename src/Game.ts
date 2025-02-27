@@ -9,32 +9,45 @@ import { BuildingManager } from './components/Building';
 import { UIManager } from './components/UI';
 
 export class Game {
-  private app: PIXI.Application;
-  private worldContainer: PIXI.Container;
-  private groundLayer: PIXI.Container;
-  private objectLayer: PIXI.Container;
-  private unitLayer: PIXI.Container;
-  private uiLayer: PIXI.Container;
+  private app!: PIXI.Application;
+  private worldContainer!: PIXI.Container;
+  private groundLayer!: PIXI.Container;
+  private objectLayer!: PIXI.Container;
+  private unitLayer!: PIXI.Container;
+  private uiLayer!: PIXI.Container;
   
-  private isoUtils: IsometricUtils;
-  private resourceManager: ResourceManager;
-  private gameMap: GameMap;
-  private villagerManager: VillagerManager;
-  private buildingManager: BuildingManager;
-  private uiManager: UIManager;
+  private isoUtils!: IsometricUtils;
+  private resourceManager!: ResourceManager;
+  private gameMap!: GameMap;
+  private villagerManager!: VillagerManager;
+  private buildingManager!: BuildingManager;
+  private uiManager!: UIManager;
+  
   
   constructor() {
-    // Create PixiJS Application with explicit renderer
-    this.app = new PIXI.Application({
+    // Create PixiJS Application
+    this.app = new PIXI.Application();
+    
+    // Initialize the application asynchronously
+    this.initializeApp().catch(console.error);
+  }
+
+  private gameLoop(ticker: PIXI.Ticker): void {
+    // Use ticker.deltaTime instead of a separate delta parameter
+    this.villagerManager.updateVillagers(ticker.deltaTime);
+  }
+
+  private async initializeApp(): Promise<void> {
+    // Initialize with options
+    await this.app.init({
       width: window.innerWidth,
       height: window.innerHeight,
       backgroundColor: COLORS.SKY,
       resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
       antialias: true
     });
     
-    // Make sure the renderer exists
+    // Ensure renderer exists
     if (!this.app.renderer) {
       console.error("Failed to initialize PIXI renderer");
       throw new Error("Failed to initialize PIXI renderer");
@@ -95,10 +108,10 @@ export class Game {
     window.addEventListener('resize', this.onResize.bind(this));
     
     // Initialize game state
-    this.init();
+    this.initGame();
   }
   
-  private init(): void {
+  private initGame(): void {
     console.log("Game initialization started");
     
     // Create initial villager at center of map
@@ -109,8 +122,8 @@ export class Game {
     const villager = this.villagerManager.createVillager(startX, startY);
     this.villagerManager.selectVillager(villager);
     
-    // Force position update for all containers - with null check
-    if (this.app && this.app.renderer) {
+    // Force position update for all containers
+    if (this.app.renderer) {
       this.app.renderer.render(this.app.stage);
     }
     
@@ -128,16 +141,13 @@ export class Game {
     
     console.log("Game initialization completed");
   }
-  
-  private gameLoop(delta: number): void {
-    // Update villagers
-    this.villagerManager.updateVillagers(delta);
-  }
-  
+
   private onResize(): void {
-    this.app.renderer.resize(window.innerWidth, window.innerHeight);
-    this.worldContainer.x = this.app.screen.width / 2;
-    this.worldContainer.y = this.app.screen.height / 4;
-    this.isoUtils.updateWorldPosition(this.worldContainer.x, this.worldContainer.y);
+    if (this.app.renderer) {
+      this.app.renderer.resize(window.innerWidth, window.innerHeight);
+      this.worldContainer.x = this.app.screen.width / 2;
+      this.worldContainer.y = this.app.screen.height / 4;
+      this.isoUtils.updateWorldPosition(this.worldContainer.x, this.worldContainer.y);
+    }
   }
 }

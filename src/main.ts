@@ -19,23 +19,33 @@ window.addEventListener('DOMContentLoaded', () => {
   debugElement.textContent = 'Initializing...';
   document.body.appendChild(debugElement);
   
+  const runTest = false; // Set to true if you want to run the simple test first
+  
   try {
-    // Try simple test first to check if PIXI works at all
-    const simpleTest = new SimpleTest();
-    
-    // After 2 seconds, if PIXI works, try initializing the full game
-    setTimeout(() => {
+    // Option to run simple test first
+    if (runTest) {
+      // Try simple test first to check if PIXI works at all
+      const simpleTest = new SimpleTest();
+      
+      // After 2 seconds, if PIXI works, try initializing the full game
+      setTimeout(() => {
+        debugElement.textContent = 'Starting Game...';
+        try {
+          const game = new Game();
+          debugElement.textContent = 'Game Initialized';
+        } catch (error) {
+          console.error("Game initialization failed:", error);
+          debugElement.textContent = 'Game Init Failed: ' + error.message;
+        }
+      }, 2000);
+    } else {
+      // Directly initialize the game
       debugElement.textContent = 'Starting Game...';
-      try {
-        const game = new Game();
-        debugElement.textContent = 'Game Initialized';
-      } catch (error) {
-        console.error("Game initialization failed:", error);
-        debugElement.textContent = 'Game Init Failed: ' + error.message;
-      }
-    }, 2000);
+      const game = new Game();
+      debugElement.textContent = 'Game Initialized';
+    }
   } catch (error) {
-    console.error("PIXI test failed:", error);
-    debugElement.textContent = 'PIXI Failed: ' + error.message;
+    console.error("Initialization failed:", error);
+    debugElement.textContent = 'Init Failed: ' + error.message;
   }
 });

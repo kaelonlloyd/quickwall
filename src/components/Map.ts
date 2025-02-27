@@ -25,13 +25,14 @@ export class GameMap {
     for (let y = 0; y < MAP_HEIGHT; y++) {
       tiles[y] = [];
       for (let x = 0; x < MAP_WIDTH; x++) {
-        // 0 = empty/grass, 1 = wall, 2 = tree, 3 = stone deposit
+        // Default to grass if not specified
         let tileType = TileType.GRASS;
         
         // Add some random trees and stone deposits
-        if (Math.random() < 0.1) {
+        const randomVal = Math.random();
+        if (randomVal < 0.1) {
           tileType = TileType.TREE;
-        } else if (Math.random() < 0.05) {
+        } else if (randomVal < 0.05) {
           tileType = TileType.STONE;
         }
         
@@ -92,9 +93,9 @@ export class GameMap {
     tileSprite.interactive = true;
     tileSprite.cursor = 'pointer';
     
-    // Store tile coordinates for reference
-    tileSprite.tileX = x;
-    tileSprite.tileY = y;
+    // Type casting to add custom properties
+    (tileSprite as any).tileX = x;
+    (tileSprite as any).tileY = y;
     
     this.groundLayer.addChild(tileSprite);
     
@@ -102,7 +103,7 @@ export class GameMap {
     if (tile.type !== TileType.GRASS) {
       const objectSprite = this.createTileObject(tile.type, pos.x, pos.y);
       this.objectLayer.addChild(objectSprite);
-      tile.sprite = objectSprite;
+      tile.sprite = objectSprite as PIXI.DisplayObject;
     }
   }
   
@@ -155,47 +156,93 @@ export class GameMap {
     return objectSprite;
   }
   
+  public isTileWalkable(x: number, y: number): boolean {
+    // Validate input coordinates
+    if (typeof x !== 'number' || typeof y !== 'number') {
+      console.error('Invalid coordinate types:', { x, y });
+      return false;
+    }
+    
+    // Round coordinates to nearest integer
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    
+    // Check map boundaries
+    if (roundedX < 0 || roundedX >= MAP_WIDTH || roundedY < 0 || roundedY >= MAP_HEIGHT) {
+      console.warn(`Tile outside map boundaries: x=${roundedX}, y=${roundedY}`);
+      return false;
+    }
+    
+    // Ensure mapData and tiles exist before accessing
+    if (!this.mapData || !this.mapData.tiles) {
+      console.error('Map data is incomplete or undefined');
+      return false;
+    }
+    
+    // Additional safety check for specific tile
+    const tileRow = this.mapData.tiles[roundedY];
+    if (!tileRow) {
+      console.error(`No tile row found at y=${roundedY}`);
+      return false;
+    }
+    
+    const tile = tileRow[roundedX];
+    if (!tile) {
+      console.error(`No tile found at coordinates: x=${roundedX}, y=${roundedY}`);
+      return false;
+    }
+    
+    // Log walkability for debugging
+    console.log(`Walkability check: x=${roundedX}, y=${roundedY}, walkable=${tile.walkable}`);
+    
+    return tile.walkable;
+  }
+  
   public addWall(x: number, y: number): boolean {
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
+    // Validate input
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    
+    if (roundedX < 0 || roundedX >= MAP_WIDTH || roundedY < 0 || roundedY >= MAP_HEIGHT) {
+      console.warn(`Cannot add wall: coordinates out of bounds x=${roundedX}, y=${roundedY}`);
       return false;
     }
     
     // Check if we can place a wall here
-    if (this.mapData.tiles[y][x].type !== TileType.GRASS) {
+    if (this.mapData.tiles[roundedY][roundedX].type !== TileType.GRASS) {
+      console.warn(`Cannot add wall: tile is not grass at x=${roundedX}, y=${roundedY}`);
       return false;
     }
     
     // Update tile data
-    this.mapData.tiles[y][x].type = TileType.WALL;
-    this.mapData.tiles[y][x].walkable = false;
+    this.mapData.tiles[roundedY][roundedX].type = TileType.WALL;
+    this.mapData.tiles[roundedY][roundedX].walkable = false;
     
     // Create wall object
-    const pos = this.isoUtils.toScreen(x, y);
+    const pos = this.isoUtils.toScreen(roundedX, roundedY);
     const wallSprite = this.createTileObject(TileType.WALL, pos.x, pos.y);
     this.objectLayer.addChild(wallSprite);
-    this.mapData.tiles[y][x].sprite = wallSprite;
+    this.mapData.tiles[roundedY][roundedX].sprite = wallSprite;
     
     return true;
   }
   
-  public isTileWalkable(x: number, y: number): boolean {
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
-      return false;
-    }
-    
-    return this.mapData.tiles[y][x].walkable;
-  }
-  
   public getTile(x: number, y: number): Tile | null {
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    
+    if (roundedX < 0 || roundedX >= MAP_WIDTH || roundedY < 0 || roundedY >= MAP_HEIGHT) {
       return null;
     }
     
-    return this.mapData.tiles[y][x];
+    return this.mapData.tiles[roundedY][roundedX];
   }
   
   public getAdjacentWalkableTile(x: number, y: number): GridPosition | null {
-    const adjacentPositions = this.isoUtils.getAdjacentTiles(x, y);
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    
+    const adjacentPositions = this.isoUtils.getAdjacentTiles(roundedX, roundedY);
     
     // Find the first walkable adjacent tile
     for (const pos of adjacentPositions) {
@@ -204,6 +251,7 @@ export class GameMap {
       }
     }
     
+    console.warn(`No walkable adjacent tile found near x=${roundedX}, y=${roundedY}`);
     return null;
   }
 }

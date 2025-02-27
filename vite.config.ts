@@ -1,9 +1,16 @@
-import { defineConfig } from "vite";
+import { defineConfig } from 'vite';
 
-// https://vite.dev/config/
 export default defineConfig({
   server: {
-    port: 8080,
-    open: true,
+    port: 8000,
+    open: true
   },
+  build: {
+    outDir: 'dist',
+    target: 'esnext', // Use latest ES features
+    sourcemap: true
+  },
+  optimizeDeps: {
+    force: true // Force dependency pre-bundling
+  }
 });

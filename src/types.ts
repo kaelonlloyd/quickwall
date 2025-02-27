@@ -10,7 +10,7 @@ export enum TileType {
 export interface Tile {
   type: TileType;
   walkable: boolean;
-  sprite: PIXI.DisplayObject | null;
+  sprite: PIXI.DisplayObject | PIXI.Graphics | null;
 }
 
 export interface MapData {
