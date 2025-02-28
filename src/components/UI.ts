@@ -395,7 +395,7 @@ export class UIManager {
       this.isDragging = false;
       this.selectionBox.clear();
     }
-  }
+  } 
 
   
   private updateSelectionBox(): void {
@@ -413,48 +413,6 @@ export class UIManager {
     this.selectionBox.endFill();
   }
   
-  private handleSelectionBox(): void {
-    // Get all villagers
-    const allVillagers = this.villagerManager.getAllVillagers();
-    
-    // Convert selection box to screen coordinates
-    const startX = Math.min(this.selectionStartX, this.selectionEndX);
-    const startY = Math.min(this.selectionStartY, this.selectionEndY);
-    const endX = Math.max(this.selectionStartX, this.selectionEndX);
-    const endY = Math.max(this.selectionStartY, this.selectionEndY);
-    
-    // Check if Ctrl key is pressed for multi-selection
-    const isCtrlPressed = this.isCtrlKeyPressed();
-    
-    // If not holding Ctrl, clear current selection first
-    if (!isCtrlPressed) {
-      this.villagerManager.clearSelection();
-    }
-    
-    // Array to store selected villagers
-    const selectedVillagers = [];
-    
-    // Check each villager to see if it's inside the selection box
-    for (const villager of allVillagers) {
-      // Get villager screen position
-      const villagerScreenPos = this.getVillagerScreenPosition(villager);
-      
-      // Check if villager is inside selection box
-      if (
-        villagerScreenPos.x >= startX &&
-        villagerScreenPos.x <= endX &&
-        villagerScreenPos.y >= startY &&
-        villagerScreenPos.y <= endY
-      ) {
-        selectedVillagers.push(villager);
-      }
-    }
-    
-    // If any villagers were in the selection box, select them
-    for (const villager of selectedVillagers) {
-      this.villagerManager.addToSelection(villager);
-    }
-  }
   
   private isCtrlKeyPressed(): boolean {
     return !!window.event && !!(window.event as KeyboardEvent).ctrlKey;
@@ -471,37 +429,7 @@ export class UIManager {
   }
   
 
-  private handleLeftClick(x: number, y: number, isCtrlPressed: boolean = false): void {
-    console.log(`Left click - Reported coordinates: x=${x}, y=${y}`);
-    console.log(`Tile details:`, {
-      mapTile: this.gameMap.getTile(x, y),
-      mapTileType: this.gameMap.getTile(x, y)?.type ? TileType[this.gameMap.getTile(x, y)!.type] : 'undefined'
-    });
-    
-    // Validate coordinates
-    if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) {
-      console.error('Invalid grid coordinates', { x, y });
-      return;
-    }
-    
-    // Check if we're in build mode
-    if (this.buildingManager.getBuildMode() === 'wall') {
-      const isShiftDown = this.shiftKeyHandler();
-      this.buildingManager.handleTileClick(x, y, isShiftDown);
-      return;
-    }
-    
-    // Check if there's a villager at this position
-    const clickedVillager = this.findVillagerAtPosition(x, y);
-    
-    if (clickedVillager) {
-      // If we clicked on a villager, select it
-      this.villagerManager.selectVillager(clickedVillager, isCtrlPressed);
-    } else if (!isCtrlPressed) {
-      // If we clicked on empty space and not holding Ctrl, deselect all
-      this.villagerManager.clearSelection();
-    }
-  }
+
 
   private getTileAtScreenPosition(screenX: number, screenY: number): GridPosition {
     const point = new PIXI.Point(screenX, screenY);
@@ -534,37 +462,146 @@ export class UIManager {
     return null;
   }
   
-  private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): void {
-    console.log(`Right click at grid coordinates: x=${x}, y=${y}`);
+
+
+  // Add the following improvements to the UIManager class
+
+// Modify the handleLeftClick method in UIManager to use the enhanced villager selection logic
+private handleLeftClick(x: number, y: number, isCtrlPressed: boolean = false): void {
+  console.log(`Left click - Reported coordinates: x=${x}, y=${y}`);
+  console.log(`Tile details:`, {
+    mapTile: this.gameMap.getTile(x, y),
+    mapTileType: this.gameMap.getTile(x, y)?.type ? TileType[this.gameMap.getTile(x, y)!.type] : 'undefined'
+  });
+  
+  // Validate coordinates
+  if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) {
+    console.error('Invalid grid coordinates', { x, y });
+    return;
+  }
+  
+  // Check if we're in build mode
+  if (this.buildingManager.getBuildMode() === 'wall') {
+    const isShiftDown = this.shiftKeyHandler();
+    this.buildingManager.handleTileClick(x, y, isShiftDown);
+    return;
+  }
+  
+  // Check if there's a villager at this position
+  const clickedVillager = this.findVillagerAtPosition(x, y);
+  
+  if (clickedVillager) {
+    // Just use selectVillager, not handleVillagerSelection
+    this.villagerManager.selectVillager(clickedVillager, isCtrlPressed);
+  }
+}
+
+// Enhance the handleRightClick method to cancel build tasks before moving
+private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): void {
+  console.log(`Right click at grid coordinates: x=${x}, y=${y}`);
+  
+  const selectedVillagers = this.villagerManager.getSelectedVillagers();
+  
+  // If we have villagers selected, right-click on ground moves them
+  if (selectedVillagers.length > 0) {
+    // First, cancel any build tasks for selected villagers
+    selectedVillagers.forEach(villager => {
+      if (villager.currentBuildTask) {
+        // Find the foundation
+        const foundation = this.gameMap.findFoundationAtPosition(
+          villager.currentBuildTask.foundation.x,
+          villager.currentBuildTask.foundation.y
+        );
+        
+        if (foundation) {
+          // Release the build position
+          if (villager.currentBuildTask.buildPosition) {
+            this.gameMap.wallManager?.releaseBuildPosition(
+              foundation,
+              villager.currentBuildTask.buildPosition
+            );
+          }
+          
+          // Remove villager from assigned villagers list
+          const index = foundation.assignedVillagers.indexOf(villager);
+          if (index !== -1) {
+            foundation.assignedVillagers.splice(index, 1);
+          }
+        }
+        
+        // Clear the build task
+        villager.currentBuildTask = undefined;
+      }
+    });
     
-    // Check if there's a foundation at this position
-    const foundation = this.gameMap.findFoundationAtPosition(x, y);
-    if (foundation) {
-      const selectedVillagers = this.villagerManager.getSelectedVillagers();
-      if (selectedVillagers.length > 0) {
+    // Check if the tile is walkable
+    if (this.gameMap.isTileWalkable(x, y)) {
+      // Move all selected villagers as a group
+      this.villagerManager.moveSelectedVillagersToPoint(x, y);
+    } else {
+      // Check if there's a foundation at this position for build assignment
+      const foundation = this.gameMap.findFoundationAtPosition(x, y);
+      if (foundation && foundation.status !== 'complete') {
+        // Assign villagers to build the foundation
         this.buildingManager.assignVillagersToFoundation(selectedVillagers, foundation);
         return;
       }
-    }
-    
-    const selectedVillagers = this.villagerManager.getSelectedVillagers();
-    
-    // If we have villagers selected, right-click on ground moves them
-    if (selectedVillagers.length > 0) {
-      // Check if the tile is walkable
-      if (this.gameMap.isTileWalkable(x, y)) {
-        // Move all selected villagers as a group
-        this.villagerManager.moveSelectedVillagersToPoint(x, y);
-      } else {
-        // If not walkable, try to find a nearby walkable tile
-        const nearbyPos = this.gameMap.getAdjacentWalkableTile(x, y);
-        if (nearbyPos) {
-          this.villagerManager.moveSelectedVillagersToPoint(nearbyPos.x, nearbyPos.y);
-        }
+      
+      // If not a foundation or not walkable, try to find a nearby walkable tile
+      const nearbyPos = this.gameMap.getAdjacentWalkableTile(x, y);
+      if (nearbyPos) {
+        this.villagerManager.moveSelectedVillagersToPoint(nearbyPos.x, nearbyPos.y);
       }
-    } else {
-      // If no villagers selected, open build menu as before
-      this.buildingManager.showBuildMenu(mouseX, mouseY);
+    }
+  } else {
+    // If no villagers selected, open build menu as before
+    this.buildingManager.showBuildMenu(mouseX, mouseY);
+  }
+}
+
+// Enhance the selection box handling to use the improved villager selection
+private handleSelectionBox(): void {
+  // Get all villagers
+  const allVillagers = this.villagerManager.getAllVillagers();
+  
+  // Convert selection box to screen coordinates
+  const startX = Math.min(this.selectionStartX, this.selectionEndX);
+  const startY = Math.min(this.selectionStartY, this.selectionEndY);
+  const endX = Math.max(this.selectionStartX, this.selectionEndX);
+  const endY = Math.max(this.selectionStartY, this.selectionEndY);
+  
+  // Check if Ctrl key is pressed for multi-selection
+  const isCtrlPressed = this.isCtrlKeyPressed();
+  
+  // If not holding Ctrl, clear current selection first
+  if (!isCtrlPressed) {
+    this.villagerManager.clearSelection();
+  }
+  
+  // Array to store selected villagers
+  const selectedVillagers = [];
+  
+  // Check each villager to see if it's inside the selection box
+  for (const villager of allVillagers) {
+    // Get villager screen position
+    const villagerScreenPos = this.getVillagerScreenPosition(villager);
+    
+    // Check if villager is inside selection box
+    if (
+      villagerScreenPos.x >= startX &&
+      villagerScreenPos.x <= endX &&
+      villagerScreenPos.y >= startY &&
+      villagerScreenPos.y <= endY
+    ) {
+      selectedVillagers.push(villager);
     }
   }
+  
+  // If any villagers were in the selection box, select them
+  for (const villager of selectedVillagers) {
+    // Use handleVillagerSelection instead of addToSelection
+    this.villagerManager.handleVillagerSelection(villager, true);
+  }
+}
+
 }

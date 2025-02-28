@@ -23,8 +23,7 @@ export class Game {
   private villagerManager!: VillagerManager;
   private buildingManager!: BuildingManager;
   private uiManager!: UIManager;
-  private wallManager!: WallManager;
-  
+  public wallManager!: WallManager;
   
   constructor() {
     // Create PixiJS Application
@@ -32,131 +31,147 @@ export class Game {
     
     // Initialize the application asynchronously
     this.initializeApp().catch(console.error);
-
-    
   }
 
+  
+  // Update the Game class constructor and initialization to fix dependency issues
 
-  private async initializeApp(): Promise<void> {
+// Replace the initialization code in initializeApp method
+private async initializeApp(): Promise<void> {
+  // Initialize with options
+  await this.app.init({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    backgroundColor: COLORS.SKY,
+    resolution: window.devicePixelRatio || 1,
+    antialias: true
+  });
+  
+  // Ensure renderer exists
+  if (!this.app.renderer) {
+    console.error("Failed to initialize PIXI renderer");
+    throw new Error("Failed to initialize PIXI renderer");
+  }
+  
+  // Add the canvas to the DOM and set its style
+  const canvas = this.app.canvas as HTMLCanvasElement;
+  canvas.style.display = 'block';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  document.body.appendChild(canvas);
+  
+  // Create layers for proper rendering order
+  this.worldContainer = new PIXI.Container();
+  this.groundLayer = new PIXI.Container();
+  this.objectLayer = new PIXI.Container();
+  this.unitLayer = new PIXI.Container();
+  this.uiLayer = new PIXI.Container();
+  
+  // Set up sortable children for proper depth ordering
+  this.worldContainer.sortableChildren = true;
+  this.groundLayer.sortableChildren = true;
+  this.objectLayer.sortableChildren = true;
+  this.unitLayer.sortableChildren = true;
+  this.uiLayer.sortableChildren = true;
+  
+  // Set up layer hierarchy
+  this.worldContainer.addChild(this.groundLayer);
+  this.worldContainer.addChild(this.objectLayer);
+  this.worldContainer.addChild(this.unitLayer);
+  this.worldContainer.addChild(this.uiLayer);
+  this.app.stage.addChild(this.worldContainer);
+  
+  // Center the world container
+  this.worldContainer.x = this.app.screen.width / 2;
+  this.worldContainer.y = this.app.screen.height / 4;
+  
+  // Initialize utilities and managers
+  this.isoUtils = new IsometricUtils(this.worldContainer.x, this.worldContainer.y);
+  
+  // Initial resources
+  const initialResources: Resources = {
+    wood: 100,
+    stone: 50
+  };
+  
+  this.resourceManager = new ResourceManager(initialResources);
+  
+  // Fix initialization order to resolve circular dependencies
+  
+  // First, create the villager manager with a temporary game map parameter
+  this.villagerManager = new VillagerManager(this.unitLayer, this.isoUtils, null as any); // Will be set later
+  
+  // Add necessary method for villager manager to set the game map later
+  // (Make sure to add this method to VillagerManager class)
+  // this.villagerManager.setGameMap = function(gameMap) { this.gameMap = gameMap; };
+  
 
-      // Then add this to your initializeApp method in Game.ts
-
-    // Initialize with options
-    await this.app.init({
-      width: window.innerWidth,
-      height: window.innerHeight,
-      backgroundColor: COLORS.SKY,
-      resolution: window.devicePixelRatio || 1,
-      antialias: true
-    });
-    
-    // Ensure renderer exists
-    if (!this.app.renderer) {
-      console.error("Failed to initialize PIXI renderer");
-      throw new Error("Failed to initialize PIXI renderer");
-    }
-    
-    // Add the canvas to the DOM and set its style
-    const canvas = this.app.canvas as HTMLCanvasElement;
-    canvas.style.display = 'block';
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    document.body.appendChild(canvas);
-    
-    // Create layers for proper rendering order
-    this.worldContainer = new PIXI.Container();
-    this.groundLayer = new PIXI.Container();
-    this.objectLayer = new PIXI.Container();
-    this.unitLayer = new PIXI.Container();
-    this.uiLayer = new PIXI.Container();
-    
-    // Set up sortable children for proper depth ordering
-    this.worldContainer.sortableChildren = true;
-    this.groundLayer.sortableChildren = true;
-    this.objectLayer.sortableChildren = true;
-    this.unitLayer.sortableChildren = true;
-    this.uiLayer.sortableChildren = true;
-    
-    // Set up layer hierarchy
-    this.worldContainer.addChild(this.groundLayer);
-    this.worldContainer.addChild(this.objectLayer);
-    this.worldContainer.addChild(this.unitLayer);
-    this.worldContainer.addChild(this.uiLayer);
-    this.app.stage.addChild(this.worldContainer);
-    
-    // Center the world container
-    this.worldContainer.x = this.app.screen.width / 2;
-    this.worldContainer.y = this.app.screen.height / 4;
-    
-    // Initialize utilities and managers
-    this.isoUtils = new IsometricUtils(this.worldContainer.x, this.worldContainer.y);
-    
-    // Initial resources
-    const initialResources: Resources = {
-      wood: 100,
-      stone: 50
-    };
-    
-    this.resourceManager = new ResourceManager(initialResources);
-    
-
-    this.villagerManager = new VillagerManager(this.unitLayer, this.isoUtils, this.gameMap);
-
+    // Create the wall manager FIRST
     this.wallManager = new WallManager(
-      this.objectLayer, 
-      this.isoUtils, 
-      (x, y) => this.gameMap.getVillagersOnTile(x, y),
-      (foundation) => this.gameMap.handleVillagersOnFoundation(foundation)
+      this.objectLayer,
+      this.isoUtils,
+      // Use safer callbacks with null checks
+      (x, y) => this.gameMap ? this.gameMap.getVillagersOnTile(x, y) : [],
+      (foundation) => this.gameMap ? this.gameMap.handleVillagersOnFoundation(foundation) : undefined,
+      (villager) => this.villagerManager ? this.villagerManager.forceVillagerMove(villager) : false
     );
     
-
+    // Then create the game map with the wall manager
     this.gameMap = new GameMap(
-      this.groundLayer, 
-      this.objectLayer, 
-      this.isoUtils, 
-      this.villagerManager,
-      this.wallManager
-    );
-
-
-    
-    this.buildingManager = new BuildingManager(this.gameMap, this.resourceManager, this.villagerManager);
-    this.uiManager = new UIManager(
-      this.app, 
       this.groundLayer,
       this.objectLayer,
-      this.gameMap, 
-      this.villagerManager, 
-      this.buildingManager
+      this.isoUtils
     );
     
-    // Set up game loop
-    this.app.ticker.add(this.gameLoop.bind(this));
+    // Now, explicitly set the wall manager in the game map
+    this.gameMap.setWallManager(this.wallManager);
     
-    // Handle window resize
-    window.addEventListener('resize', this.onResize.bind(this));
+    // Now, initialize the VillagerManager with the game map
+    this.villagerManager = new VillagerManager(this.unitLayer, this.isoUtils, this.gameMap);
     
-    // Initialize game state
-    this.initGame();
+    // Make sure the GameMap knows about the VillagerManager as well
+    this.gameMap.setVillagerManager(this.villagerManager);
     
-    // Setup event listeners for keyboard controls
-    this.setupEventListeners();
-
-      // Call this in your initializeApp method:
-  this.setupContextMenuPrevention();
-  
+  // Now update the villager manager with the game map reference
+  if (typeof this.villagerManager.setGameMap === 'function') {
+    this.villagerManager.setGameMap(this.gameMap);
   }
   
-
+  // Create the building manager
+  this.buildingManager = new BuildingManager(this.gameMap, this.resourceManager, this.villagerManager);
+  
+  // Create the UI manager
+  this.uiManager = new UIManager(
+    this.app, 
+    this.groundLayer,
+    this.objectLayer,
+    this.gameMap, 
+    this.villagerManager, 
+    this.buildingManager
+  );
+  
+  // Set up game loop
+  this.app.ticker.add(this.gameLoop.bind(this));
+  
+  // Handle window resize
+  window.addEventListener('resize', this.onResize.bind(this));
+  
+  // Initialize game state
+  this.initGame();
+  
+  // Setup event listeners for keyboard controls
+  this.setupEventListeners();
+  
+  // Setup context menu prevention
+  this.setupContextMenuPrevention();
+}
+  
   private setupContextMenuPrevention(): void {
     // Simple, focused approach
     document.oncontextmenu = () => false;
     this.app.canvas.oncontextmenu = () => false;
   }
   
-
-
-
   private initGame(): void {
     console.log("Game initialization started");
     
@@ -254,6 +269,4 @@ export class Game {
     // Modify tile click handling in UI to pass shift key state
     this.uiManager.setShiftKeyHandler(() => isShiftDown);
   }
-
-  
 }

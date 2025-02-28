@@ -99,7 +99,7 @@ export class BuildingManager {
   public assignVillagersToFoundation(villagers: Villager[], foundation: WallFoundation): void {
     villagers.forEach(villager => {
       // Find an available position around the foundation
-      const buildPosition = this.gameMap.wallManager.findAvailableBuildPosition(foundation);
+      const buildPosition = this.gameMap.wallManager?.findAvailableBuildPosition(foundation);
       
       if (!buildPosition) {
         console.log("No available build positions for villager");
@@ -108,7 +108,7 @@ export class BuildingManager {
       }
       
       // Mark the position as occupied
-      this.gameMap.wallManager.occupyBuildPosition(foundation, buildPosition);
+      this.gameMap.wallManager?.occupyBuildPosition(foundation, buildPosition);
       
       // Convert WallFoundation to WallFoundationData
       const foundationData: WallFoundationData = {
@@ -143,6 +143,8 @@ export class BuildingManager {
   }
   
   public handleTileClick(x: number, y: number, isShiftDown: boolean = false): void {
+    console.log(`BuildingManager handleTileClick - Coordinates: x=${x}, y=${y}, ShiftDown=${isShiftDown}`);
+    
     // Ensure we're in wall build mode and have selected villagers
     if (this.buildMode !== 'wall') return;
     
@@ -155,11 +157,17 @@ export class BuildingManager {
       return;
     }
     
+    // Additional logging for tile state
+    const tileAtPosition = this.gameMap.getTile(x, y);
+    console.log('Tile at placement:', {
+      tileExists: !!tileAtPosition,
+      tileType: tileAtPosition ? TileType[tileAtPosition.type] : 'N/A'
+    });
+    
     // Place wall foundation
     const foundation = this.gameMap.addWallFoundation(x, y);
     if (!foundation) {
-      // If placement fails, show a visual indicator or play a sound
-      console.log('Wall placement failed');
+      console.error('Wall placement failed at', { x, y });
       return;
     }
     
