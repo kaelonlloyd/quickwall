@@ -112,48 +112,8 @@ export class VillagerManager {
     return villager;
   }
   
-  private updateVillagerVisuals(villager: Villager): void {
-    // Update visuals based on state machine state
-    switch (villager.stateMachine.getCurrentState()) {
-      case VillagerState.SELECTED:
-        villager.selectionRing.visible = true;
-        break;
-      case VillagerState.BUILDING:
-        // Add a temporary visual indicator
-        villager.sprite.alpha = 0.7;
-        break;
-      case VillagerState.RESTING:
-        // Fade out the villager
-        villager.sprite.alpha = 0.5;
-      default:
-        villager.selectionRing.visible = false;
-        villager.sprite.alpha = 1;
-    }
-  }
   
-  public selectVillager(villager: Villager, addToSelection: boolean = false): void {
-    // Clear previous selections if not adding to selection
-    if (!addToSelection) {
-      this.selectedVillagers.forEach(v => 
-        v.stateMachine.handleEvent(VillagerEvent.DESELECT)
-      );
-      this.selectedVillagers = [];
-    }
-    
-    // Toggle selection for this villager
-    if (!this.selectedVillagers.includes(villager)) {
-      this.selectedVillagers.push(villager);
-      villager.stateMachine.handleEvent(VillagerEvent.SELECT);
-    } else {
-      // If already selected and adding to selection, deselect
-      const index = this.selectedVillagers.indexOf(villager);
-      this.selectedVillagers.splice(index, 1);
-      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
-    }
-    
-    // Update selection display
-    this.updateSelectionDisplay();
-  }
+
   
   public moveSelectedVillagersToPoint(targetX: number, targetY: number): void {
     if (this.selectedVillagers.length === 0) return;
@@ -161,7 +121,7 @@ export class VillagerManager {
     // For multiple units, generate formation positions
     if (this.selectedVillagers.length === 1) {
       // For single unit, just move directly to target
-      this.moveVillager(this.selectedVillagers[0], targetX, targetY);
+      this.moveVillagerTo(this.selectedVillagers[0], targetX, targetY);
       return;
     }
     
@@ -172,12 +132,12 @@ export class VillagerManager {
     for (let i = 0; i < this.selectedVillagers.length; i++) {
       const targetPos = positions[i];
       if (targetPos && this.gameMap.isTileWalkable(targetPos.x, targetPos.y)) {
-        this.moveVillager(this.selectedVillagers[i], targetPos.x, targetPos.y);
+        this.moveVillagerTo(this.selectedVillagers[i], targetPos.x, targetPos.y);
       } else {
         // If position is not walkable, find a nearby walkable tile
         const nearbyPos = this.gameMap.getAdjacentWalkableTile(targetX, targetY);
         if (nearbyPos) {
-          this.moveVillager(this.selectedVillagers[i], nearbyPos.x, nearbyPos.y);
+          this.moveVillagerTo(this.selectedVillagers[i], nearbyPos.x, nearbyPos.y);
         }
       }
     }
@@ -220,29 +180,6 @@ export class VillagerManager {
     return positions;
   }
   
-  public moveVillager(villager: Villager, targetX: number, targetY: number): void {
-    // Validate target coordinates
-    const clampedX = Math.max(0, Math.min(Math.floor(targetX), 19));
-    const clampedY = Math.max(0, Math.min(Math.floor(targetY), 19));
-    
-    // Use pathfinder to calculate path
-    const pathFinder = new ImprovedPathFinder(this.gameMap);
-    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY);
-    
-    // No path found
-    if (path.length === 0) {
-      villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
-      return;
-    }
-    
-    // Set movement properties
-    villager.targetX = clampedX;
-    villager.targetY = clampedY;
-    villager.path = path;
-    
-    // Trigger state machine events
-    villager.stateMachine.handleEvent(VillagerEvent.START_MOVE);
-  }
   
   public updateVillagers(delta: number): void {
     this.villagers.forEach(villager => {
@@ -270,6 +207,12 @@ export class VillagerManager {
           // Check if path is complete
           if (villager.path.length === 0) {
             villager.stateMachine.handleEvent(VillagerEvent.MOVE_COMPLETE);
+            
+            // Execute callback if exists
+            if (villager.task && villager.task.type === 'move' && villager.task.callback) {
+              villager.task.callback();
+              villager.task = null; // Clear the task after execution
+            }
           }
         } else {
           // Continue moving
@@ -283,12 +226,18 @@ export class VillagerManager {
           const pos = this.isoUtils.toScreen(villager.x, villager.y);
           villager.sprite.x = pos.x;
           villager.sprite.y = pos.y;
+          
+          // Update zIndex based on y-coordinate for proper depth sorting
+          villager.sprite.zIndex = villager.y * 10;
         }
       }
       
-      // Check for fatigue
-      if (villager.health < 30) {
-        villager.stateMachine.handleEvent(VillagerEvent.FATIGUE);
+      // Update visuals based on state
+      this.updateVillagerVisuals(villager);
+      
+      // Handle building tasks
+      if (villager.stateMachine.getCurrentState() === VillagerState.BUILDING && villager.currentBuildTask) {
+        // Villager is actively building - could add animations or other effects here
       }
     });
   }
@@ -306,7 +255,7 @@ export class VillagerManager {
       }
       
       // Move villager to build position
-      this.moveVillager(villager, buildPosition.x, buildPosition.y);
+      this.moveVillagerTo(villager, buildPosition.x, buildPosition.y);
       
       // Set build task
       villager.currentBuildTask = {
@@ -356,7 +305,7 @@ export class VillagerManager {
         console.log(`Found walkable tile at (${neighbor.x}, ${neighbor.y}), moving villager`);
         
         // Use immediate movement to get the villager out of the way
-        this.moveVillager(villager, neighbor.x, neighbor.y);
+        this.moveVillagerTo(villager, neighbor.x, neighbor.y);
         return true;
       }
     }
@@ -366,7 +315,7 @@ export class VillagerManager {
     
     if (alternativeTile) {
       console.log(`Found alternative walkable tile at (${alternativeTile.x}, ${alternativeTile.y}), moving villager`);
-      this.moveVillager(villager, alternativeTile.x, alternativeTile.y);
+      this.moveVillagerTo(villager, alternativeTile.x, alternativeTile.y);
       return true;
     }
     
@@ -375,21 +324,47 @@ export class VillagerManager {
   }
 
   public moveVillagerTo(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
-    this.moveVillager(villager, targetX, targetY);
+    // Adjust coordinates to ensure they're valid
+    const clampedX = Math.max(0, Math.min(Math.floor(targetX), 19));
+    const clampedY = Math.max(0, Math.min(Math.floor(targetY), 19));
+    
+    // Use pathfinder to calculate path
+    const pathFinder = new ImprovedPathFinder(this.gameMap);
+    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY);
+    
+    // If no path found, try finding an alternative target
+    if (path.length === 0) {
+      console.warn(`No path found to (${clampedX}, ${clampedY}), looking for alternatives`);
+      const alternativeTile = this.gameMap.findAlternativeWalkableTile(clampedX, clampedY, 2);
+      
+      if (alternativeTile) {
+        console.log(`Found alternative path to (${alternativeTile.x}, ${alternativeTile.y})`);
+        return this.moveVillagerTo(villager, alternativeTile.x, alternativeTile.y, callback);
+      }
+      
+      console.error(`Could not find any path to destination`);
+      villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
+      return;
+    }
+    
+    // Store the callback in the villager's task
+    const task: VillagerTask = {
+      type: 'move',
+      target: { x: clampedX, y: clampedY },
+      callback: callback
+    };
+    
+    villager.task = task;
+    
+    // Set movement properties
+    villager.targetX = clampedX;
+    villager.targetY = clampedY;
+    villager.path = path;
+    
+    // Trigger state machine events
+    villager.stateMachine.handleEvent(VillagerEvent.START_MOVE);
   }
 
-  public clearSelection(): void {
-    // Deselect all currently selected villagers
-    this.selectedVillagers.forEach(villager => {
-      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
-    });
-    
-    // Clear the selected villagers array
-    this.selectedVillagers = [];
-    
-    // Update the selection display
-    this.updateSelectionDisplay();
-  }
   
   // Update the updateSelectionDisplay method if not already present
   private updateSelectionDisplay(): void {
@@ -456,6 +431,109 @@ export class VillagerManager {
       );
     }
   }
+
+
+
+// Also modify the clearSelection method
+public clearSelection(): void {
+  // Deselect all currently selected villagers
+  this.selectedVillagers.forEach(villager => {
+    villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
+    this.updateVillagerVisuals(villager); // Update visuals immediately
+  });
+  
+  // Clear the selected villagers array
+  this.selectedVillagers = [];
+  
+  // Update the selection display
+  this.updateSelectionDisplay();
+}
+
+
+
+private updateVillagerVisuals(villager: Villager): void {
+  // Update visuals based on state machine state
+  const currentState = villager.stateMachine.getCurrentState();
+  
+  // Handle different states
+  switch (currentState) {
+    case VillagerState.SELECTED:
+      // Make selection ring visible
+      villager.selectionRing.visible = true;
+      
+      // Add pulsing animation if not already added
+      if (!villager.selectionAnimation) {
+        // Create a simple animation object
+        const startTime = Date.now();
+        villager.selectionAnimation = {
+          active: true,
+          update: () => {
+            if (!villager.selectionAnimation?.active) return;
+            const scale = 0.9 + Math.sin((Date.now() - startTime) * 0.005) * 0.1;
+            villager.selectionRing.scale.set(scale);
+          }
+        };
+      }
+      break;
+      
+    case VillagerState.BUILDING:
+      // Keep selection ring if building while selected
+      villager.selectionRing.visible = this.selectedVillagers.includes(villager);
+      villager.sprite.alpha = 0.8; // Slight transparency to indicate building
+      break;
+      
+    case VillagerState.MOVING:
+      // Keep selection ring if moving while selected
+      villager.selectionRing.visible = this.selectedVillagers.includes(villager);
+      villager.sprite.alpha = 1.0;
+      break;
+      
+    default:
+      // For other states like IDLE, RESTING, etc.
+      villager.selectionRing.visible = false;
+      villager.sprite.alpha = 1.0;
+      
+      // Remove animation if it exists
+      if (villager.selectionAnimation) {
+        // Mark animation as inactive
+        villager.selectionAnimation.active = false;
+        villager.selectionAnimation = null;
+        
+        // Reset scale
+        villager.selectionRing.scale.set(1);
+      }
+  }
+}
+
+// Modify the selectVillager method to update visuals immediately
+public selectVillager(villager: Villager, addToSelection: boolean = false): void {
+  // Clear previous selections if not adding to selection
+  if (!addToSelection) {
+    this.selectedVillagers.forEach(v => {
+      v.stateMachine.handleEvent(VillagerEvent.DESELECT);
+      this.updateVillagerVisuals(v); // Update visuals immediately
+    });
+    this.selectedVillagers = [];
+  }
+  
+  // Toggle selection for this villager
+  if (!this.selectedVillagers.includes(villager)) {
+    this.selectedVillagers.push(villager);
+    villager.stateMachine.handleEvent(VillagerEvent.SELECT);
+    this.updateVillagerVisuals(villager); // Update visuals immediately
+  } else if (addToSelection) {
+    // If already selected and adding to selection, deselect
+    const index = this.selectedVillagers.indexOf(villager);
+    this.selectedVillagers.splice(index, 1);
+    villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
+    this.updateVillagerVisuals(villager); // Update visuals immediately
+  }
+  
+  // Update selection display
+  this.updateSelectionDisplay();
+}
+
+  
 }
 
 // Exports for use in other files

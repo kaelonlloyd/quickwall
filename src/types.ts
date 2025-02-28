@@ -64,11 +64,17 @@ export interface VillagerTask {
 }
 
 
+export interface VillagerAnimation {
+  active: boolean;
+  update: () => void;
+}
+
+// Then modify the Villager interface to use this type
 export interface Villager {
   sprite: PIXI.Container;
   selectionRing: PIXI.Graphics;
   selectionFlag?: PIXI.Graphics | null;
-  selectionAnimation?: any;
+  selectionAnimation?: VillagerAnimation | null; // Updated type
   healthBar?: PIXI.Graphics;
   x: number;
   y: number;
@@ -83,8 +89,7 @@ export interface Villager {
   currentBuildTask: BuildTask | null;
   health: number;
   maxHealth?: number;
-  stateMachine: VillagerStateMachine; // Add this line
-  
+  stateMachine: VillagerStateMachine;
 }
 
 export interface GameState {

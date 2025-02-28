@@ -243,14 +243,54 @@ private async initializeApp(): Promise<void> {
     }
   }
 
+
   private gameLoop(ticker: PIXI.Ticker): void {
-    // Update villagers' movement
-    this.villagerManager.updateVillagers(ticker.deltaTime);
+    // Calculate delta time for consistent updates
+    const delta = ticker.deltaTime;
     
-    // Update wall foundation building
-    this.buildingManager.updateFoundationBuilding(ticker.deltaTime);
+    // Update villagers' movement and states
+    this.villagerManager.updateVillagers(delta);
+    
+    // Update wall foundation building - this now depends on villagers actively building
+    if (this.wallManager) {
+      this.wallManager.updateFoundationBuilding(delta);
+    }
+    
+    // Update building manager state
+    if (this.buildingManager) {
+      this.buildingManager.updateFoundationBuilding(delta);
+
+      this.sortContainersForDepth();
+  }
+}
+
+private sortContainersForDepth(): void {
+  // Sort object layer by y-position (depth)
+  for (let i = 0; i < this.objectLayer.children.length; i++) {
+    const child = this.objectLayer.children[i];
+    if ((child as any).tileY !== undefined) {
+      child.zIndex = (child as any).tileY * 10;
+    }
   }
   
+  // Sort unit layer by y-position (depth)
+  for (let i = 0; i < this.unitLayer.children.length; i++) {
+    const unit = this.unitLayer.children[i];
+    // Get the villager data for this sprite
+    const villager = this.villagerManager.getAllVillagers().find(v => v.sprite === unit);
+    if (villager) {
+      unit.zIndex = villager.y * 10;
+    }
+  }
+  
+  // Sort the layers
+  if (this.groundLayer.sortableChildren) this.groundLayer.sortChildren();
+  if (this.objectLayer.sortableChildren) this.objectLayer.sortChildren();
+  if (this.unitLayer.sortableChildren) this.unitLayer.sortChildren();
+}
+  
+
+
   // Update UI event listeners to pass shift key state
   private setupEventListeners(): void {
     // Keyboard event to track shift key

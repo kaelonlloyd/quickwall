@@ -62,6 +62,7 @@ export interface VillagerStateMachine {
 
 
 
+
 // State Machine for managing villager states
 export class VillagerStateMachine {
   private currentState: VillagerState = VillagerState.IDLE;
@@ -69,10 +70,10 @@ export class VillagerStateMachine {
   private eventHandlers: Map<VillagerEvent, ((context: VillagerStateContext) => void)[]>;
   private config: VillagerStateMachineConfig;
 
-  constructor(
-    private context: VillagerStateContext, 
-    config: VillagerStateMachineConfig = {}
-  ) {
+ constructor(
+  private context: VillagerStateContext, 
+  config: VillagerStateMachineConfig = {}
+) { {
     this.config = {
       maxHealth: 100,
       fatigueThreshold: 30,
@@ -80,7 +81,11 @@ export class VillagerStateMachine {
     };
 
     // Define valid state transitions
-    this.stateTransitions = new Map([
+    this.stateTransitions =
+    
+    
+    
+    new Map([
       [VillagerState.IDLE, [
         VillagerState.MOVING, 
         VillagerState.BUILDING, 
@@ -128,46 +133,110 @@ export class VillagerStateMachine {
     this.eventHandlers = new Map();
     this.setupDefaultEventHandlers();
   }
+}
 
-  // Setup default event handlers with basic state transition logic
-  private setupDefaultEventHandlers(): void {
-    // Movement event handlers
-    this.addEventListener(VillagerEvent.START_MOVE, (ctx) => {
-      this.transitionTo(VillagerState.MOVING);
-      ctx.villager.moving = true;
-    });
+private setupDefaultEventHandlers(): void {
+  // Movement event handlers
+  this.addEventListener(VillagerEvent.START_MOVE, (ctx) => {
+    console.log("Villager starting to move");
+    this.transitionTo(VillagerState.MOVING);
+    ctx.villager.moving = true;
+  });
 
-    this.addEventListener(VillagerEvent.MOVE_COMPLETE, (ctx) => {
-      this.transitionTo(VillagerState.IDLE);
-      ctx.villager.moving = false;
-    });
+  this.addEventListener(VillagerEvent.MOVE_COMPLETE, (ctx) => {
+    console.log("Villager completed movement");
+    this.transitionTo(VillagerState.IDLE);
+    ctx.villager.moving = false;
+  });
 
-    this.addEventListener(VillagerEvent.MOVE_INTERRUPTED, (ctx) => {
-      this.transitionTo(VillagerState.IDLE);
-      ctx.villager.moving = false;
-    });
+  this.addEventListener(VillagerEvent.MOVE_INTERRUPTED, (ctx) => {
+    console.log("Villager movement interrupted");
+    this.transitionTo(VillagerState.IDLE);
+    ctx.villager.moving = false;
+  });
 
-    // Building event handlers
-    this.addEventListener(VillagerEvent.START_BUILD, (ctx) => {
-      if (ctx.villager.currentBuildTask) {
-        this.transitionTo(VillagerState.BUILDING);
-      }
-    });
+  // Building event handlers
+  this.addEventListener(VillagerEvent.START_BUILD, (ctx) => {
+    if (ctx.villager.currentBuildTask) {
+      console.log("Villager starting to build");
+      this.transitionTo(VillagerState.BUILDING);
+    }
+  });
 
-    this.addEventListener(VillagerEvent.BUILD_COMPLETE, (ctx) => {
-      this.transitionTo(VillagerState.IDLE);
-      ctx.villager.currentBuildTask = null;
-    });
+  this.addEventListener(VillagerEvent.BUILD_PROGRESS, (ctx) => {
+    // Stay in building state, no state change needed
+    // This event can be used to trigger animations or other effects
+  });
 
-    // Selection event handlers
-    this.addEventListener(VillagerEvent.SELECT, (ctx) => {
+  this.addEventListener(VillagerEvent.BUILD_COMPLETE, (ctx) => {
+    console.log("Villager completed building");
+    this.transitionTo(VillagerState.IDLE);
+    ctx.villager.currentBuildTask = null;
+  });
+
+  this.addEventListener(VillagerEvent.BUILD_INTERRUPTED, (ctx) => {
+    console.log("Villager build task interrupted");
+    this.transitionTo(VillagerState.IDLE);
+    ctx.villager.currentBuildTask = null;
+  });
+
+  // Gathering event handlers
+  this.addEventListener(VillagerEvent.START_GATHER_WOOD, (ctx) => {
+    console.log("Villager starting to gather wood");
+    this.transitionTo(VillagerState.GATHERING_WOOD);
+  });
+
+  this.addEventListener(VillagerEvent.START_GATHER_STONE, (ctx) => {
+    console.log("Villager starting to gather stone");
+    this.transitionTo(VillagerState.GATHERING_STONE);
+  });
+
+  this.addEventListener(VillagerEvent.GATHER_COMPLETE, (ctx) => {
+    console.log("Villager completed gathering");
+    this.transitionTo(VillagerState.CARRYING_RESOURCES);
+  });
+
+  this.addEventListener(VillagerEvent.INVENTORY_FULL, (ctx) => {
+    console.log("Villager inventory full");
+    this.transitionTo(VillagerState.CARRYING_RESOURCES);
+  });
+
+  // Selection event handlers
+  this.addEventListener(VillagerEvent.SELECT, (ctx) => {
+    console.log("Villager selected");
+    // If currently in a task state like building, keep that state
+    if (this.currentState !== VillagerState.BUILDING && 
+        this.currentState !== VillagerState.GATHERING_WOOD &&
+        this.currentState !== VillagerState.GATHERING_STONE) {
       this.transitionTo(VillagerState.SELECTED);
-    });
+    }
+  });
 
-    this.addEventListener(VillagerEvent.DESELECT, (ctx) => {
+  this.addEventListener(VillagerEvent.DESELECT, (ctx) => {
+    console.log("Villager deselected");
+    // If currently in a task state, stay in that state
+    if (this.currentState === VillagerState.SELECTED) {
       this.transitionTo(VillagerState.IDLE);
-    });
-  }
+    }
+  });
+
+  // Resource handling
+  this.addEventListener(VillagerEvent.DEPOSIT_RESOURCES, (ctx) => {
+    console.log("Villager depositing resources");
+    this.transitionTo(VillagerState.IDLE);
+  });
+
+  // Rest/fatigue handling
+  this.addEventListener(VillagerEvent.FATIGUE, (ctx) => {
+    console.log("Villager fatigued");
+    this.transitionTo(VillagerState.RESTING);
+  });
+
+  this.addEventListener(VillagerEvent.REST_COMPLETE, (ctx) => {
+    console.log("Villager rest complete");
+    this.transitionTo(VillagerState.IDLE);
+  });
+}
 
   // Add an event listener
   public addEventListener(

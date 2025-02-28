@@ -5,6 +5,9 @@ import { ResourceManager } from '../utils/ResourceManager';
 import { VillagerManager } from './Villager';
 import { WallFoundation } from './WallManager';
 import { BuildingStateMachine, BuildingState, BuildingEvent, BuildingConfig } from './BuildingStateMachine';
+import { VillagerEvent } from './VillagerStateMachine';
+
+
 
 export class BuildingManager {
   private gameMap: GameMap;
@@ -104,13 +107,14 @@ export class BuildingManager {
   }
   
   public assignVillagersToFoundation(villagers: Villager[], foundation: WallFoundation): void {
+    console.log(`Assigning ${villagers.length} villagers to build foundation at (${foundation.x}, ${foundation.y})`);
+    
     villagers.forEach(villager => {
       // Find an available position around the foundation
       const buildPosition = this.gameMap.wallManager?.findAvailableBuildPosition(foundation);
       
       if (!buildPosition) {
         console.log("No available build positions for villager");
-        // Put the villager in a resting state since there's no space
         return;
       }
       
@@ -119,7 +123,7 @@ export class BuildingManager {
       
       // Move villager to the specific build position
       this.villagerManager.moveVillagerTo(villager, buildPosition.x, buildPosition.y, () => {
-        console.log("Villager arrived at build position:", buildPosition);
+        console.log(`Villager arrived at build position: (${buildPosition.x}, ${buildPosition.y})`);
         
         // Once at the build position, assign build task
         const buildTask: BuildTask = {
@@ -127,7 +131,7 @@ export class BuildingManager {
           foundation: {
             x: foundation.x,
             y: foundation.y,
-            health: 0,
+            health: foundation.buildProgress || 0,
             maxHealth: 100
           },
           buildPosition: buildPosition
@@ -135,11 +139,13 @@ export class BuildingManager {
         
         villager.currentBuildTask = buildTask;
         
-        // Trigger build state on the building's state machine
-        foundation.stateMachine.handleEvent(BuildingEvent.PROGRESS_CONSTRUCTION);
+        // Trigger build state on the villager's state machine
+        villager.stateMachine.handleEvent(VillagerEvent.START_BUILD);
         
-        // Add villager to foundation's assigned villagers
-        foundation.assignedVillagers.push(villager);
+        // Add villager to foundation's assigned villagers if not already there
+        if (!foundation.assignedVillagers.includes(villager)) {
+          foundation.assignedVillagers.push(villager);
+        }
       });
     });
   }

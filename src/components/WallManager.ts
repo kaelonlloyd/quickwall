@@ -6,16 +6,18 @@ import { Villager, GridPosition } from '../types';
 import { GameMap } from './Map';
 
 export interface WallFoundation {
-  x: number;
-  y: number;
-  sprite: PIXI.Graphics;
-  progressBar: PIXI.Graphics;
-  stateMachine: BuildingStateMachine;
-  assignedVillagers: Villager[];
-  occupiedPositions: { x: number, y: number }[];
-  villagersCleared: boolean;
-  status: string;
-}
+    x: number;
+    y: number;
+    sprite: PIXI.Graphics;
+    progressBar: PIXI.Graphics;
+    stateMachine: BuildingStateMachine;
+    assignedVillagers: Villager[];
+    occupiedPositions: { x: number, y: number }[];
+    villagersCleared: boolean;
+    status: 'foundation' | 'building' | 'complete'; // Add proper status tracking
+    isBuilding: boolean; // Flag to track active building
+    buildProgress: number; // Track actual build progress
+  }
 
 export class WallManager {
   private objectLayer: PIXI.Container;
@@ -104,14 +106,17 @@ export class WallManager {
 
     // Create wall foundation object
     const foundation: WallFoundation = {
-      x,
-      y,
-      sprite: wallFoundation,
-      progressBar,
-      stateMachine,
-      assignedVillagers: [],
-      occupiedPositions: [],
-      villagersCleared: false
+        x,
+        y,
+        sprite: wallFoundation,
+        progressBar,
+        stateMachine,
+        assignedVillagers: [],
+        occupiedPositions: [],
+        villagersCleared: false,
+        status: 'foundation', // Initial status is foundation
+        isBuilding: false, // Not actively building yet
+        buildProgress: 0 // Start at 0% progress
     };
 
     // Make the foundation sprites interactive for click handling
@@ -149,25 +154,94 @@ export class WallManager {
     return foundation;
   }
 
+
+  private isVillagerAdjacentToFoundation(villager: Villager, foundation: WallFoundation): boolean {
+    // Calculate grid distance
+    const dx = Math.abs(villager.x - foundation.x);
+    const dy = Math.abs(villager.y - foundation.y);
+    
+    // Check if adjacent (including diagonals) but not on the same tile
+    return (dx <= 1 && dy <= 1) && !(dx === 0 && dy === 0);
+  }
+
+  
+  private countActiveBuilders(foundation: WallFoundation): number {
+    // Filter assigned villagers to those that are:
+    // 1. In position (adjacent to foundation)
+    // 2. Not moving
+    // 3. Have a current build task assigned to this foundation
+    let activeCount = 0;
+    
+    for (const villager of foundation.assignedVillagers) {
+      // Check if villager is adjacent to foundation
+      const isAdjacent = this.isVillagerAdjacentToFoundation(villager, foundation);
+      
+      // Check if villager is not moving and has correct build task
+      const isBuilding = !villager.moving && 
+                         villager.currentBuildTask && 
+                         villager.currentBuildTask.type === 'wall' &&
+                         villager.currentBuildTask.foundation &&
+                         villager.currentBuildTask.foundation.x === foundation.x &&
+                         villager.currentBuildTask.foundation.y === foundation.y;
+      
+      if (isAdjacent && isBuilding) {
+        activeCount++;
+      }
+    }
+    
+    return activeCount;
+  }
+
   public updateFoundationBuilding(delta: number): void {
     const foundationsToUpdate = [...this.wallFoundations];
     
     foundationsToUpdate.forEach(foundation => {
-      // Progress construction
-      foundation.stateMachine.handleEvent(BuildingEvent.PROGRESS_CONSTRUCTION, { 
-        progress: delta * 10 // Adjust progress speed as needed
-      });
+      // Skip completed foundations
+      if (foundation.status === 'complete') {
+        return;
+      }
       
-      // Update progress bar
-      foundation.progressBar.visible = true;
-      foundation.progressBar.scale.x = foundation.stateMachine.getConstructionProgress() / 100;
+      // Only progress if there are assigned villagers in position and building
+      const activeBuilders = this.countActiveBuilders(foundation);
       
-      // Check if construction is complete
-      if (foundation.stateMachine.getCurrentState() === BuildingState.COMPLETE) {
-        this.completeFoundation(foundation);
+      if (activeBuilders > 0) {
+        // Foundation has active builders, allow construction to progress
+        foundation.isBuilding = true;
+        foundation.status = 'building';
+        
+        // Progress speed based on number of builders (diminishing returns)
+        const buildSpeed = Math.min(1 + (activeBuilders * 0.5), 3); // Max 3x speed
+        const progressIncrement = delta * 2 * buildSpeed; // Adjust base speed as needed
+        
+        // Update progress
+        foundation.buildProgress += progressIncrement;
+        foundation.progressBar.visible = true;
+        foundation.progressBar.scale.x = foundation.buildProgress / 100;
+        
+        // Update state machine
+        foundation.stateMachine.handleEvent(BuildingEvent.PROGRESS_CONSTRUCTION, {
+          progress: progressIncrement
+        });
+        
+        // Check if construction is complete
+        if (foundation.buildProgress >= 100 || 
+            foundation.stateMachine.getCurrentState() === BuildingState.COMPLETE) {
+          this.completeFoundation(foundation);
+        }
+        
+        // Pulse the foundation to show active building
+        const pulseScale = 1 + Math.sin(Date.now() * 0.01) * 0.05;
+        foundation.sprite.scale.set(pulseScale);
+      } else {
+        // No active builders, foundation is not actively building
+        foundation.isBuilding = false;
+        
+        // Static appearance for inactive foundation
+        foundation.sprite.scale.set(1);
       }
     });
   }
+  
 
   private completeFoundation(foundation: WallFoundation): void {
     // Fully solid wall appearance
@@ -186,6 +260,10 @@ export class WallManager {
     
     // Hide progress bar
     foundation.progressBar.visible = false;
+
+    foundation.status = 'complete';
+    foundation.isBuilding = false;
+    foundation.buildProgress = 100;
     
     // Clear assigned villagers
     foundation.assignedVillagers = [];
