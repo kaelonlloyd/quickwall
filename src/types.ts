@@ -4,7 +4,8 @@ export enum TileType {
   GRASS = 0,
   WALL = 1,
   TREE = 2,
-  STONE = 3
+  STONE = 3,
+  RUBBLE = 4
 }
 
 export interface GridPosition {
@@ -26,12 +27,13 @@ export interface WallFoundationData {
 export interface BuildTask {
   type: 'wall';
   foundation: WallFoundationData;
+  buildPosition?: GridPosition; // Position where villager should stand to build
 }
 
 export interface Tile {
   type: TileType;
   walkable: boolean;
-  sprite: PIXI.DisplayObject | null;
+  sprite: PIXI.Container | null; // More specific type that works with removeChild
 }
 
 export interface MapData {

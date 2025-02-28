@@ -96,8 +96,20 @@ export class BuildingManager {
     return this.buildMode;
   }
   
-  private assignVillagersToFoundation(villagers: Villager[], foundation: WallFoundation): void {
+  public assignVillagersToFoundation(villagers: Villager[], foundation: WallFoundation): void {
     villagers.forEach(villager => {
+      // Find an available position around the foundation
+      const buildPosition = this.gameMap.wallManager.findAvailableBuildPosition(foundation);
+      
+      if (!buildPosition) {
+        console.log("No available build positions for villager");
+        // Put the villager in a resting state since there's no space
+        return;
+      }
+      
+      // Mark the position as occupied
+      this.gameMap.wallManager.occupyBuildPosition(foundation, buildPosition);
+      
       // Convert WallFoundation to WallFoundationData
       const foundationData: WallFoundationData = {
         x: foundation.x,
@@ -109,13 +121,17 @@ export class BuildingManager {
         buildProgress: foundation.buildProgress,
         status: foundation.status
       };
-
-      // Move villager near the foundation
-      this.villagerManager.moveVillagerNear(villager, foundation.x, foundation.y, () => {
-        // Once near, assign build task
+  
+      // Move villager to the specific build position, not directly to the foundation
+      // Use a more precise navigation approach
+      this.villagerManager.moveVillagerTo(villager, buildPosition.x, buildPosition.y, () => {
+        console.log("Villager arrived at build position:", buildPosition);
+        
+        // Once at the build position, assign build task
         const buildTask: BuildTask = {
           type: 'wall',
-          foundation: foundationData
+          foundation: foundationData,
+          buildPosition: buildPosition
         };
         
         villager.currentBuildTask = buildTask;

@@ -9,7 +9,7 @@ export class GameMap {
   private groundLayer: PIXI.Container;
   private objectLayer: PIXI.Container;
   private isoUtils: IsometricUtils;
-  private wallManager: WallManager;
+  public wallManager: WallManager;
   
   constructor(groundLayer: PIXI.Container, objectLayer: PIXI.Container, isoUtils: IsometricUtils) {
     this.groundLayer = groundLayer;
@@ -103,10 +103,16 @@ export class GameMap {
     this.groundLayer.addChild(tileSprite);
     
     // Add objects based on tile type
-    if (tile.type !== TileType.GRASS) {
+    if (tile.type !== TileType.GRASS && tile.type !== TileType.RUBBLE) {
       const objectSprite = this.createTileObject(tile.type, pos.x, pos.y);
       this.objectLayer.addChild(objectSprite);
-      tile.sprite = objectSprite as PIXI.DisplayObject;
+      tile.sprite = objectSprite
+
+      // Set the zIndex based on the y-coordinate for depth sorting
+      objectSprite.zIndex = y;
+    } else if (tile.type === TileType.RUBBLE) {
+      // Create rubble tile
+      this.createRubbleTile(x, y);
     }
   }
   
@@ -126,22 +132,23 @@ export class GameMap {
         break;
         
       case TileType.TREE:
-        // Tree trunk
+        // Tree trunk - centered
         objectSprite.beginFill(COLORS.TREE_TRUNK);
         objectSprite.drawRect(TILE_WIDTH / 2 - 5, TILE_HEIGHT / 2, 10, TILE_HEIGHT / 2);
         objectSprite.endFill();
         
-        // Tree top (simple triangle for now)
+        // Tree top (improved triangle shape, centered)
         objectSprite.beginFill(COLORS.TREE_LEAVES);
         objectSprite.drawPolygon([
-          TILE_WIDTH / 2, -TILE_HEIGHT / 2,
-          TILE_WIDTH / 2 - 25, TILE_HEIGHT / 2,
-          TILE_WIDTH / 2 + 25, TILE_HEIGHT / 2
+          TILE_WIDTH / 2, 0, // Top center point
+          TILE_WIDTH / 2 - 25, TILE_HEIGHT / 2, // Bottom left
+          TILE_WIDTH / 2 + 25, TILE_HEIGHT / 2  // Bottom right
         ]);
         objectSprite.endFill();
         break;
         
       case TileType.STONE:
+        // Center the stone
         objectSprite.beginFill(COLORS.STONE);
         objectSprite.drawEllipse(TILE_WIDTH / 2, TILE_HEIGHT / 2, TILE_WIDTH / 3, TILE_HEIGHT / 4);
         objectSprite.endFill();
@@ -156,7 +163,62 @@ export class GameMap {
     
     objectSprite.x = x;
     objectSprite.y = y;
+    
+    // Make objects interactive so they can be clicked
+    objectSprite.interactive = true;
+    objectSprite.cursor = 'pointer';
+    
+    // Store the tile coordinates for reference
+    (objectSprite as any).tileX = Math.round((x - this.isoUtils.toScreen(0, 0).x) / TILE_WIDTH);
+    (objectSprite as any).tileY = Math.round((y - this.isoUtils.toScreen(0, 0).y) / TILE_HEIGHT);
+    
     return objectSprite;
+  }
+  
+  private createRubbleTile(x: number, y: number): void {
+    const pos = this.isoUtils.toScreen(x, y);
+    
+    // Get the ground tile at this position and update its appearance
+    for (let i = 0; i < this.groundLayer.children.length; i++) {
+      const tile = this.groundLayer.children[i] as PIXI.Graphics;
+      const tileX = (tile as any).tileX;
+      const tileY = (tile as any).tileY;
+      
+      if (tileX === x && tileY === y) {
+        // Clear existing tile
+        tile.clear();
+        
+        // Draw rubble-colored tile
+        tile.beginFill(COLORS.STONE_DETAIL); // Grey color for rubble
+        tile.moveTo(0, TILE_HEIGHT / 2);
+        tile.lineTo(TILE_WIDTH / 2, 0);
+        tile.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
+        tile.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
+        tile.lineTo(0, TILE_HEIGHT / 2);
+        tile.endFill();
+        
+        // Add slight outlines
+        tile.lineStyle(1, COLORS.STONE, 0.3);
+        tile.moveTo(0, TILE_HEIGHT / 2);
+        tile.lineTo(TILE_WIDTH / 2, 0);
+        tile.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
+        tile.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
+        tile.lineTo(0, TILE_HEIGHT / 2);
+        
+        // Add some rubble details
+        tile.beginFill(COLORS.WALL, 0.5);
+        // Small random debris
+        for (let j = 0; j < 5; j++) {
+          const debrisX = Math.random() * TILE_WIDTH;
+          const debrisY = Math.random() * TILE_HEIGHT;
+          const size = 2 + Math.random() * 4;
+          tile.drawCircle(debrisX, debrisY, size);
+        }
+        tile.endFill();
+        
+        break;
+      }
+    }
   }
   
   public isTileWalkable(x: number, y: number): boolean {
@@ -195,8 +257,10 @@ export class GameMap {
       return false;
     }
     
-    // Log walkability for debugging
-    console.log(`Walkability check: x=${roundedX}, y=${roundedY}, walkable=${tile.walkable}`);
+    // Handle rubble tiles which are walkable
+    if (tile.type === TileType.RUBBLE) {
+      return true;
+    }
     
     return tile.walkable;
   }
@@ -320,5 +384,74 @@ export class GameMap {
     
     return null;
   }
+  
+  public findFoundationAtPosition(x: number, y: number): WallFoundation | null {
+    const foundations = this.getWallFoundations();
+    return foundations.find(f => f.x === x && f.y === y) || null;
+  }
+  
+  public findFoundationBySprite(sprite: PIXI.DisplayObject): WallFoundation | null {
+    const foundations = this.getWallFoundations();
+    return foundations.find(f => f.sprite === sprite || f.progressBar === sprite) || null;
+  }
+  
+  public deleteWallAtPosition(x: number, y: number): boolean {
+    // First check if there's a foundation at this position
+    const foundation = this.findFoundationAtPosition(x, y);
+    if (foundation) {
+      // Remove foundation from wall manager
+      this.wallManager.removeFoundation(foundation);
+      
+      // Change tile back to walkable
+      if (this.mapData.tiles[y][x]) {
+        // If it was a completed wall, create rubble
+        if (foundation.status === 'complete') {
+          this.mapData.tiles[y][x].type = TileType.RUBBLE;
+          this.mapData.tiles[y][x].walkable = true;
+          
+          // Remove any sprites
+          if (this.mapData.tiles[y][x].sprite) {
+            this.objectLayer.removeChild(this.mapData.tiles[y][x].sprite);
+            this.mapData.tiles[y][x].sprite = null;
+          }
+          
 
+          
+          // Create rubble visuals
+          this.createRubbleTile(x, y);
+        } else {
+          // If it was just a foundation, revert to grass
+          this.mapData.tiles[y][x].type = TileType.GRASS;
+          this.mapData.tiles[y][x].walkable = true;
+          
+          // Remove any sprites
+          if (this.mapData.tiles[y][x].sprite) {
+            this.objectLayer.removeChild(this.mapData.tiles[y][x].sprite);
+            this.mapData.tiles[y][x].sprite = null;
+          }
+        }
+      }
+      
+      return true;
+    }
+    
+    // If no foundation found, check if it's a tree or stone
+    if (this.mapData.tiles[y][x] && 
+        (this.mapData.tiles[y][x].type === TileType.TREE || 
+         this.mapData.tiles[y][x].type === TileType.STONE)) {
+      // Remove the object sprite
+      if (this.mapData.tiles[y][x].sprite) {
+        this.objectLayer.removeChild(this.mapData.tiles[y][x].sprite);
+        this.mapData.tiles[y][x].sprite = null;
+      }
+      
+      // Convert to grass
+      this.mapData.tiles[y][x].type = TileType.GRASS;
+      this.mapData.tiles[y][x].walkable = true;
+      
+      return true;
+    }
+    
+    return false;
+  }
 }

@@ -30,10 +30,15 @@ export class Game {
     
     // Initialize the application asynchronously
     this.initializeApp().catch(console.error);
+
+    
   }
 
 
   private async initializeApp(): Promise<void> {
+
+      // Then add this to your initializeApp method in Game.ts
+
     // Initialize with options
     await this.app.init({
       width: window.innerWidth,
@@ -63,6 +68,13 @@ export class Game {
     this.unitLayer = new PIXI.Container();
     this.uiLayer = new PIXI.Container();
     
+    // Set up sortable children for proper depth ordering
+    this.worldContainer.sortableChildren = true;
+    this.groundLayer.sortableChildren = true;
+    this.objectLayer.sortableChildren = true;
+    this.unitLayer.sortableChildren = true;
+    this.uiLayer.sortableChildren = true;
+    
     // Set up layer hierarchy
     this.worldContainer.addChild(this.groundLayer);
     this.worldContainer.addChild(this.objectLayer);
@@ -91,7 +103,8 @@ export class Game {
     this.buildingManager = new BuildingManager(this.gameMap, this.resourceManager, this.villagerManager);
     this.uiManager = new UIManager(
       this.app, 
-      this.groundLayer, 
+      this.groundLayer,
+      this.objectLayer,
       this.gameMap, 
       this.villagerManager, 
       this.buildingManager
@@ -105,8 +118,25 @@ export class Game {
     
     // Initialize game state
     this.initGame();
+    
+    // Setup event listeners for keyboard controls
+    this.setupEventListeners();
+
+      // Call this in your initializeApp method:
+  this.setupContextMenuPrevention();
+  
   }
   
+
+  private setupContextMenuPrevention(): void {
+    // Simple, focused approach
+    document.oncontextmenu = () => false;
+    this.app.canvas.oncontextmenu = () => false;
+  }
+  
+
+
+
   private initGame(): void {
     console.log("Game initialization started");
     
@@ -204,4 +234,6 @@ export class Game {
     // Modify tile click handling in UI to pass shift key state
     this.uiManager.setShiftKeyHandler(() => isShiftDown);
   }
+
+  
 }

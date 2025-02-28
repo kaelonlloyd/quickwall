@@ -14,6 +14,7 @@ export interface WallFoundation {
   isBuilding: boolean;
   buildProgress: number;
   status: 'foundation' | 'building' | 'complete';
+  occupiedPositions: { x: number, y: number }[]; // Track positions occupied by villagers
 }
 
 export class WallManager {
@@ -25,6 +26,9 @@ export class WallManager {
   constructor(objectLayer: PIXI.Container, isoUtils: IsometricUtils) {
     this.objectLayer = objectLayer;
     this.isoUtils = isoUtils;
+    
+    // Enable sorting in the object layer for proper depth
+    this.objectLayer.sortableChildren = true;
   }
 
   public createWallFoundation(x: number, y: number): WallFoundation | null {
@@ -62,6 +66,10 @@ export class WallManager {
     wallFoundation.y = pos.y;
     progressBar.x = pos.x;
     progressBar.y = pos.y - 10;
+    
+    // Set zIndex based on y position for proper depth sorting
+    wallFoundation.zIndex = y;
+    progressBar.zIndex = y;
 
     // Create wall foundation object
     const foundation: WallFoundation = {
@@ -74,8 +82,17 @@ export class WallManager {
       assignedVillagers: [],
       isBuilding: false,
       buildProgress: 0,
-      status: 'foundation'
+      status: 'foundation',
+      occupiedPositions: []
     };
+
+    // Make the foundation sprites interactive for click handling
+    wallFoundation.interactive = true;
+    wallFoundation.cursor = 'pointer';
+    
+    // Store tile coordinates for reference
+    (wallFoundation as any).tileX = x;
+    (wallFoundation as any).tileY = y;
 
     // Add to layer
     this.objectLayer.addChild(wallFoundation);
@@ -93,18 +110,37 @@ export class WallManager {
 
     if (oldestIndex !== -1) {
       const foundationToRemove = this.wallFoundations[oldestIndex];
-      
-      // Remove from layer
-      this.objectLayer.removeChild(foundationToRemove.sprite);
-      this.objectLayer.removeChild(foundationToRemove.progressBar);
-      
-      // Destroy graphics to free memory
-      foundationToRemove.sprite.destroy();
-      foundationToRemove.progressBar.destroy();
-      
-      // Remove from array
-      this.wallFoundations.splice(oldestIndex, 1);
+      this.removeFoundation(foundationToRemove);
     }
+  }
+  
+  public removeFoundation(foundation: WallFoundation): void {
+    // Find index in array
+    const index = this.wallFoundations.indexOf(foundation);
+    if (index === -1) return;
+    
+    // Remove from layer
+    this.objectLayer.removeChild(foundation.sprite);
+    this.objectLayer.removeChild(foundation.progressBar);
+    
+    // Destroy graphics to free memory
+    foundation.sprite.destroy();
+    foundation.progressBar.destroy();
+    
+    // Remove from array
+    this.wallFoundations.splice(index, 1);
+    
+    // Clear any assigned villagers
+    foundation.assignedVillagers.forEach(villager => {
+      if (villager.currentBuildTask && 
+          villager.currentBuildTask.type === 'wall' && 
+          villager.currentBuildTask.foundation.x === foundation.x && 
+          villager.currentBuildTask.foundation.y === foundation.y) {
+        villager.currentBuildTask = undefined;
+      }
+    });
+    
+    foundation.assignedVillagers = [];
   }
 
   public updateFoundationBuilding(delta: number): void {
@@ -180,11 +216,84 @@ export class WallManager {
     foundation.progressBar.visible = false;
     
     // Clear assigned villagers
+    foundation.assignedVillagers.forEach(villager => {
+      if (villager.currentBuildTask) {
+        villager.currentBuildTask = undefined;
+      }
+    });
     foundation.assignedVillagers = [];
+    foundation.occupiedPositions = [];
   }
 
   public getWallFoundations(): WallFoundation[] {
     return this.wallFoundations;
+  }
+  
+  // Find an available position around the foundation for a villager to build from
+  public findAvailableBuildPosition(foundation: WallFoundation): { x: number, y: number } | null {
+    // Potential adjacent tiles around the foundation - include more diagonal positions
+    const potentialTiles = [
+      // Cardinal directions
+      { x: foundation.x - 1, y: foundation.y },     // Left
+      { x: foundation.x + 1, y: foundation.y },     // Right
+      { x: foundation.x, y: foundation.y - 1 },     // Top
+      { x: foundation.x, y: foundation.y + 1 },     // Bottom
+      
+      // Diagonal directions
+      { x: foundation.x - 1, y: foundation.y - 1 }, // Top-Left
+      { x: foundation.x + 1, y: foundation.y - 1 }, // Top-Right
+      { x: foundation.x - 1, y: foundation.y + 1 }, // Bottom-Left
+      { x: foundation.x + 1, y: foundation.y + 1 }, // Bottom-Right
+      
+      // Additional in-between positions for more granular placement
+      { x: foundation.x - 1, y: foundation.y - 0.5 }, // Left-TopLeft
+      { x: foundation.x - 1, y: foundation.y + 0.5 }, // Left-BottomLeft
+      { x: foundation.x + 1, y: foundation.y - 0.5 }, // Right-TopRight
+      { x: foundation.x + 1, y: foundation.y + 0.5 }, // Right-BottomRight
+      { x: foundation.x - 0.5, y: foundation.y - 1 }, // TopLeft-Top
+      { x: foundation.x + 0.5, y: foundation.y - 1 }, // TopRight-Top
+      { x: foundation.x - 0.5, y: foundation.y + 1 }, // BottomLeft-Bottom
+      { x: foundation.x + 0.5, y: foundation.y + 1 }  // BottomRight-Bottom
+    ];
+    
+    // Filter to valid positions (bounds check and not occupied)
+    const availablePositions = potentialTiles.filter(pos => {
+      // Check map boundaries
+      if (pos.x < 0 || pos.x >= 20 || pos.y < 0 || pos.y >= 20) {
+        return false;
+      }
+      
+      // Check if position is already occupied by another villager
+      return !foundation.occupiedPositions.some(
+        occupied => Math.abs(occupied.x - pos.x) < 0.2 && Math.abs(occupied.y - pos.y) < 0.2
+      );
+    });
+    
+    if (availablePositions.length === 0) {
+      return null;
+    }
+    
+    // Sort positions by distance to foundation center for more predictable assignment
+    availablePositions.sort((a, b) => {
+      const distA = Math.sqrt(Math.pow(a.x - foundation.x, 2) + Math.pow(a.y - foundation.y, 2));
+      const distB = Math.sqrt(Math.pow(b.x - foundation.x, 2) + Math.pow(b.y - foundation.y, 2));
+      return distA - distB;
+    });
+    
+    // Return the closest available position
+    return availablePositions[0];
+  }
+  
+  // Mark a position as occupied for a foundation
+  public occupyBuildPosition(foundation: WallFoundation, position: { x: number, y: number }): void {
+    foundation.occupiedPositions.push({ x: position.x, y: position.y });
+  }
+  
+  // Release a position when a villager stops building
+  public releaseBuildPosition(foundation: WallFoundation, position: { x: number, y: number }): void {
+    foundation.occupiedPositions = foundation.occupiedPositions.filter(
+      pos => pos.x !== position.x || pos.y !== position.y
+    );
   }
 
   // Method to clean up all foundations (call on game reset or exit)

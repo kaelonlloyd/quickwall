@@ -61,7 +61,7 @@ window.addEventListener('DOMContentLoaded', () => {
           debugElement.textContent = 'Game Initialized';
         } catch (error) {
           console.error("Game initialization failed:", error);
-          debugElement.textContent = 'Game Init Failed: ' + error.message;
+          debugElement.textContent = 'Game Init Failed: ' + (error instanceof Error ? error.message : String(error));
         }
       }, 2000);
     } else {
@@ -72,6 +72,6 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   } catch (error) {
     console.error("Initialization failed:", error);
-    debugElement.textContent = 'Init Failed: ' + error.message;
+    debugElement.textContent = 'Game Init Failed: ' + (error instanceof Error ? error.message : String(error));
   }
 });

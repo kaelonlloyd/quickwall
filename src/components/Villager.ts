@@ -4,7 +4,7 @@ import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { GameMap } from './Map';
 import { WallFoundation } from './WallManager';
-import {PathFinder} from '../utils/pathfinding';
+import { PathFinder } from '../utils/pathfinding';
 
 export class VillagerManager {
   private villagers: Villager[];
@@ -12,7 +12,6 @@ export class VillagerManager {
   private isoUtils: IsometricUtils;
   private selectedVillagers: Villager[];
   private gameMap: GameMap;
-  private selectionCountText: PIXI.Text;
   
   constructor(unitLayer: PIXI.Container, isoUtils: IsometricUtils, gameMap: GameMap) {
     this.villagers = [];
@@ -20,6 +19,9 @@ export class VillagerManager {
     this.isoUtils = isoUtils;
     this.selectedVillagers = [];
     this.gameMap = gameMap; 
+    
+    // Enable sorting in unit layer for depth-based rendering
+    this.unitLayer.sortableChildren = true;
     
     // Create selection count text for DOM
     document.addEventListener('DOMContentLoaded', () => {
@@ -167,6 +169,9 @@ export class VillagerManager {
     villagerContainer.x = pos.x;
     villagerContainer.y = pos.y;
     
+    // Set zIndex based on y-coordinate for proper depth sorting
+    villagerContainer.zIndex = y;
+    
     const villagerSprite = new PIXI.Graphics();
     
     // Body
@@ -254,6 +259,10 @@ export class VillagerManager {
     villager.healthBar.beginFill(healthPercent > 0.5 ? 0x00FF00 : (healthPercent > 0.25 ? 0xFFFF00 : 0xFF0000));
     villager.healthBar.drawRect(TILE_WIDTH / 4, -10, (TILE_WIDTH / 2) * healthPercent, 4);
     villager.healthBar.endFill();
+  }
+
+  public moveVillagerTo(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
+    this.moveVillager(villager, targetX, targetY, callback);
   }
   
   public moveVillager(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
@@ -438,37 +447,6 @@ export class VillagerManager {
     // Move to the closest walkable tile
     this.moveVillager(villager, closestTile.x, closestTile.y, callback);
   }
-
-  private findClosestWalkableTileToFoundation(foundationX: number, foundationY: number): GridPosition | null {
-    // Array of potential adjacent tiles, prioritized by closeness
-    const potentialTiles: GridPosition[] = [
-      { x: foundationX - 1, y: foundationY },     // Left
-      { x: foundationX + 1, y: foundationY },     // Right
-      { x: foundationX, y: foundationY - 1 },     // Top
-      { x: foundationX, y: foundationY + 1 },     // Bottom
-      { x: foundationX - 1, y: foundationY - 1 }, // Top-Left
-      { x: foundationX + 1, y: foundationY - 1 }, // Top-Right
-      { x: foundationX - 1, y: foundationY + 1 }, // Bottom-Left
-      { x: foundationX + 1, y: foundationY + 1 }  // Bottom-Right
-    ];
-    
-    // Find the first walkable tile, sorted by proximity to the foundation
-    const walkableTiles = potentialTiles.filter(tile => 
-      tile.x >= 0 && tile.x < 20 && 
-      tile.y >= 0 && tile.y < 20 && 
-      this.gameMap.isTileWalkable(tile.x, tile.y)
-    );
-    
-    // If no walkable tiles, return null
-    if (walkableTiles.length === 0) return null;
-    
-    // Sort walkable tiles by distance to foundation
-    return walkableTiles.sort((a, b) => {
-      const distA = Math.abs(a.x - foundationX) + Math.abs(a.y - foundationY);
-      const distB = Math.abs(b.x - foundationX) + Math.abs(b.y - foundationY);
-      return distA - distB;
-    })[0];
-  }
   
   public updateVillagers(delta: number): void {
     // First, update positions for all moving villagers
@@ -497,6 +475,9 @@ export class VillagerManager {
           const pos = this.isoUtils.toScreen(villager.x, villager.y);
           villager.sprite.x = pos.x;
           villager.sprite.y = pos.y;
+          
+          // Update zIndex for proper depth sorting
+          villager.sprite.zIndex = villager.y;
           
           // If path is now empty, we've reached destination
           if (villager.path.length === 0) {
@@ -534,6 +515,9 @@ export class VillagerManager {
             const pos = this.isoUtils.toScreen(villager.x, villager.y);
             villager.sprite.x = pos.x;
             villager.sprite.y = pos.y;
+            
+            // Update zIndex for proper depth sorting
+            villager.sprite.zIndex = villager.y;
           }
         }
       }
@@ -548,6 +532,7 @@ export class VillagerManager {
       // Check if villager has a current build task
       if (villager.currentBuildTask && villager.currentBuildTask.type === 'wall') {
         const foundation = villager.currentBuildTask.foundation;
+        const buildPosition = villager.currentBuildTask.buildPosition;
         
         // Find the corresponding wall foundation in the game map
         const wallFoundations = this.gameMap.getWallFoundations();
@@ -555,10 +540,28 @@ export class VillagerManager {
           f => f.x === foundation.x && f.y === foundation.y
         );
         
-        // Check if villager is adjacent to the foundation
-        if (matchingFoundation && this.isAdjacentToFoundation(villager, matchingFoundation)) {
-          // Villager is next to the foundation, start building
-          matchingFoundation.isBuilding = true;
+        // Check if villager is at their assigned build position - use more lenient distance check
+        if (matchingFoundation && buildPosition) {
+          const dx = Math.abs(villager.x - buildPosition.x);
+          const dy = Math.abs(villager.y - buildPosition.y);
+          
+          // Use a more lenient distance threshold (0.8 instead of 0.5)
+          // This will help ensure villagers can start building from any direction
+          if (dx < 0.8 && dy < 0.8) {
+            console.log("Villager at build position, starting to build");
+            matchingFoundation.isBuilding = true;
+          }
+        }
+        
+        // If foundation is completed or removed, clear the build task
+        if (!matchingFoundation || matchingFoundation.status === 'complete') {
+          // Release the build position
+          if (matchingFoundation && buildPosition) {
+            this.gameMap.wallManager.releaseBuildPosition(matchingFoundation, buildPosition);
+          }
+          
+          // Clear the build task
+          villager.currentBuildTask = undefined;
         }
       }
     });
@@ -574,23 +577,29 @@ export class VillagerManager {
   }
 
   private isAdjacentToFoundation(villager: Villager, foundation: WallFoundation): boolean {
+    // If the villager has a specific build position, use that instead
+    if (villager.currentBuildTask && 
+        villager.currentBuildTask.buildPosition && 
+        villager.currentBuildTask.foundation.x === foundation.x && 
+        villager.currentBuildTask.foundation.y === foundation.y) {
+      
+      const buildPos = villager.currentBuildTask.buildPosition;
+      const dx = Math.abs(villager.x - buildPos.x);
+      const dy = Math.abs(villager.y - buildPos.y);
+      return dx < 0.5 && dy < 0.5; // At the exact build position
+    }
+    
+    // Otherwise use the standard adjacency check
     const dx = Math.abs(villager.x - foundation.x);
     const dy = Math.abs(villager.y - foundation.y);
     
     // Check if villager is in an adjacent tile in any direction
-    const isAdjacent = (
+    return (
       (dx <= 1 && dy <= 1) && // Within adjacent tiles
       !(dx === 0 && dy === 0) // Not on the same exact tile
     );
-    
-    if (!isAdjacent) return false;
-    
-    // Find the closest edge of the foundation
-    const closestEdge = this.findClosestFoundationEdge(villager, foundation);
-    
-    return closestEdge !== null;
   }
-  
+
   private findClosestFoundationEdge(villager: Villager, foundation: WallFoundation): { x: number, y: number } | null {
     // Possible adjacent positions relative to foundation
     const adjacentPositions = [
@@ -611,6 +620,4 @@ export class VillagerManager {
       this.gameMap.isTileWalkable(pos.x, pos.y)
     ) || null;
   }
-  
-
 }

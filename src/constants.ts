@@ -27,7 +27,8 @@ export const COLORS = {
   VILLAGER_BODY: 0xFFD700,
   VILLAGER_HEAD: 0xFFE0BD,
   SELECTION_RING: 0x00FF00,
-  SKY: 0x87CEEB
+  SKY: 0x87CEEB,
+  RUBBLE: 0x696969
 };
 
 // Tile properties
@@ -35,5 +36,6 @@ export const TILE_PROPERTIES = {
   [TileType.GRASS]: { walkable: true },
   [TileType.WALL]: { walkable: false },
   [TileType.TREE]: { walkable: false },
-  [TileType.STONE]: { walkable: false }
+  [TileType.STONE]: { walkable: false },
+  [TileType.RUBBLE]: { walkable: true }
 };

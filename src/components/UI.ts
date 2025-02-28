@@ -3,10 +3,12 @@ import { BuildingManager } from './Building';
 import { GameMap } from './Map';
 import { VillagerManager } from './Villager';
 import { GridPosition } from '../types';
+import { WallFoundation } from './WallManager';
 
 export class UIManager {
   private app: PIXI.Application;
   private groundLayer: PIXI.Container;
+  private objectLayer: PIXI.Container;
   private gameMap: GameMap;
   private villagerManager: VillagerManager;
   private buildingManager: BuildingManager;
@@ -21,18 +23,25 @@ export class UIManager {
   private selectionEndY: number = 0;
   private isDragging: boolean = false;
   
+  // Build mode drag properties
+  private buildDragging: boolean = false;
+  private buildStartTile: GridPosition | null = null;
+  private buildPreviewTiles: PIXI.Graphics[] = [];
+  
   // Shift key handler
   private shiftKeyHandler: () => boolean = () => false;
   
   constructor(
     app: PIXI.Application, 
-    groundLayer: PIXI.Container, 
+    groundLayer: PIXI.Container,
+    objectLayer: PIXI.Container,
     gameMap: GameMap, 
     villagerManager: VillagerManager,
     buildingManager: BuildingManager
   ) {
     this.app = app;
     this.groundLayer = groundLayer;
+    this.objectLayer = objectLayer;
     this.gameMap = gameMap;
     this.villagerManager = villagerManager;
     this.buildingManager = buildingManager;
@@ -52,27 +61,44 @@ export class UIManager {
   }
   
   private setupEventListeners(): void {
+    // Prevent context menu
+    document.oncontextmenu = () => false;
+    this.app.canvas.oncontextmenu = () => false;
+    
     // Keyboard events
     document.addEventListener('keydown', (e) => {
       // ESC key to cancel build mode
       if (e.key === 'Escape') {
         this.buildingManager.setBuildMode(null);
       }
-    });
-    
-    // Selection box events
-    document.addEventListener('mousedown', this.onMouseDown.bind(this));
-    document.addEventListener('mousemove', this.onMouseMove.bind(this));
-    document.addEventListener('mouseup', this.onMouseUp.bind(this));
-    
-
-    document.addEventListener('contextmenu', (e) => {
-      // Prevent context menu for all right-clicks with any modifier
-      if (e.button === 2 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) {
-        e.preventDefault();
-        return false;
+      
+      // Delete key to remove walls/foundations
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        this.handleDeleteKey();
       }
     });
+
+    // Add tracking for shift key release during build dragging
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'Shift') {
+        // If we were in build dragging mode and shift is released before mouse
+        if (this.buildDragging && this.buildStartTile) {
+          console.log("Shift released during drag, placing single foundation");
+          this.buildingManager.handleTileClick(this.buildStartTile.x, this.buildStartTile.y, false);
+          
+          // Clean up the build state
+          this.clearBuildPreview();
+          this.buildDragging = false;
+          this.buildStartTile = null;
+        }
+      }
+    });
+    
+    // Selection box events - attach to canvas
+    const canvas = this.app.canvas;
+    canvas.addEventListener('mousedown', this.onMouseDown.bind(this));
+    canvas.addEventListener('mousemove', this.onMouseMove.bind(this));
+    canvas.addEventListener('mouseup', this.onMouseUp.bind(this));
 
     // Set up interactive events on ground tiles
     for (let i = 0; i < this.groundLayer.children.length; i++) {
@@ -92,8 +118,15 @@ export class UIManager {
             // Check if shift key is down
             const isShiftDown = this.shiftKeyHandler();
             
-            this.buildingManager.handleTileClick(tileX, tileY, isShiftDown);
-            return;
+            if (nativeEvent.button === 0) { // Left click in build mode
+              if (isShiftDown && this.buildingManager.getBuildMode() === 'wall') {
+                this.buildStartTile = { x: tileX, y: tileY };
+                this.buildDragging = true;
+              } else {
+                this.buildingManager.handleTileClick(tileX, tileY, isShiftDown);
+              }
+              return;
+            }
           }
           
           // Existing click handling
@@ -117,6 +150,11 @@ export class UIManager {
           // If in wall build mode, provide visual feedback
           if (this.buildingManager.getBuildMode() === 'wall') {
             tile.tint = 0xAAAAAA; // Slightly grey to indicate potential build
+            
+            // If build dragging, show preview
+            if (this.buildDragging && this.buildStartTile) {
+              this.showBuildPreview(this.buildStartTile, { x: tileX, y: tileY });
+            }
           } else {
             tile.tint = 0xDDDDDD;
           }
@@ -129,15 +167,129 @@ export class UIManager {
       }
     }
     
-    // Prevent right-click context menu
-    this.app.view.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
+    // Add click listeners to the object layer for foundation clicks
+    this.objectLayer.interactive = true;
+    this.objectLayer.on('pointerdown', this.handleObjectLayerClick.bind(this));
+  }
+  
+  private handleDeleteKey(): void {
+    // Find if any foundations are hovered
+    const hoveredTile = this.hoveredTile;
+    if (hoveredTile.x >= 0 && hoveredTile.y >= 0) {
+      this.gameMap.deleteWallAtPosition(hoveredTile.x, hoveredTile.y);
+    }
+  }
+  
+  private showBuildPreview(startTile: GridPosition, endTile: GridPosition): void {
+    // Clear existing preview
+    this.clearBuildPreview();
+    
+    // Calculate line of tiles between start and end
+    const tiles = this.calculateLineTiles(startTile, endTile);
+    
+    // Create preview for each tile
+    tiles.forEach(tile => {
+      if (this.gameMap.isTileWalkable(tile.x, tile.y)) {
+        // Get screen position for tile
+        const screenPos = this.villagerManager.getIsoUtils().toScreen(tile.x, tile.y);
+        
+        // Create preview graphic
+        const preview = new PIXI.Graphics();
+        preview.lineStyle(2, 0xFFFF00, 0.8);
+        preview.beginFill(0xFFFF00, 0.3);
+        preview.drawRect(0, 0, 64, 32);
+        preview.endFill();
+        preview.x = screenPos.x;
+        preview.y = screenPos.y;
+        
+        this.app.stage.addChild(preview);
+        this.buildPreviewTiles.push(preview);
+      }
     });
+  }
+  
+  private clearBuildPreview(): void {
+    this.buildPreviewTiles.forEach(preview => {
+      this.app.stage.removeChild(preview);
+      preview.destroy();
+    });
+    this.buildPreviewTiles = [];
+  }
+  
+  private calculateLineTiles(startTile: GridPosition, endTile: GridPosition): GridPosition[] {
+    const tiles: GridPosition[] = [];
+    
+    // Bresenham's line algorithm
+    const x1 = startTile.x;
+    const y1 = startTile.y;
+    const x2 = endTile.x;
+    const y2 = endTile.y;
+    
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const sx = x1 < x2 ? 1 : -1;
+    const sy = y1 < y2 ? 1 : -1;
+    let err = dx - dy;
+    
+    let x = x1;
+    let y = y1;
+    
+    while (true) {
+      tiles.push({ x, y });
+      
+      if (x === x2 && y === y2) break;
+      
+      const e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        x += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        y += sy;
+      }
+    }
+    
+    return tiles;
+  }
+  
+  private handleObjectLayerClick(event: PIXI.FederatedPointerEvent): void {
+    // Only handle right clicks on objects
+    if (event.button !== 2) return;
+    
+    // Get the target object
+    const target = event.target;
+    if (!target) return;
+    
+    // Check if it's a wall foundation
+    const foundation = this.gameMap.findFoundationBySprite(target as PIXI.DisplayObject);
+    if (foundation) {
+      const selectedVillagers = this.villagerManager.getSelectedVillagers();
+      if (selectedVillagers.length > 0) {
+        this.buildingManager.assignVillagersToFoundation(selectedVillagers, foundation);
+      }
+    }
   }
   
   private onMouseDown(event: MouseEvent): void {
     // Only start selection on left mouse button
     if (event.button === 0) {
+      // Check if we're in build mode with shift key
+      if (this.buildingManager.getBuildMode() === 'wall' && this.shiftKeyHandler()) {
+        const tilePos = this.getTileAtScreenPosition(event.clientX, event.clientY);
+        if (tilePos.x >= 0 && tilePos.y >= 0) {
+          // Start build dragging
+          this.buildStartTile = tilePos;
+          this.buildDragging = true;
+          // Don't start selection box when in build mode
+          return;
+        }
+      }
+      
+      // Clear any existing selection box
+      this.selectionBox.clear();
+      
+      // Start normal selection process
       this.isSelecting = true;
       this.isDragging = false;
       this.selectionStartX = event.clientX;
@@ -148,6 +300,15 @@ export class UIManager {
   }
   
   private onMouseMove(event: MouseEvent): void {
+    // Update build preview if in build drag mode
+    if (this.buildDragging && this.buildStartTile && this.shiftKeyHandler()) {
+      const currentTile = this.getTileAtScreenPosition(event.clientX, event.clientY);
+      if (currentTile.x >= 0 && currentTile.y >= 0) {
+        this.showBuildPreview(this.buildStartTile, currentTile);
+      }
+    }
+    
+    // Update selection box if selecting
     if (this.isSelecting) {
       const dragDistance = Math.sqrt(
         Math.pow(event.clientX - this.selectionStartX, 2) + 
@@ -165,6 +326,36 @@ export class UIManager {
   }
   
   private onMouseUp(event: MouseEvent): void {
+    // Handle build mode drag end
+    if (this.buildDragging && this.buildStartTile && event.button === 0) {
+      const endTile = this.getTileAtScreenPosition(event.clientX, event.clientY);
+      
+      if (endTile.x >= 0 && endTile.y >= 0) {
+        // If shift is still held, place all foundations
+        if (this.shiftKeyHandler()) {
+          console.log("Completing build drag from", this.buildStartTile, "to", endTile);
+          
+          // Calculate all tiles in the line
+          const tiles = this.calculateLineTiles(this.buildStartTile, endTile);
+          
+          // Create foundations on all tiles
+          tiles.forEach((tile, index) => {
+            // Always keep build mode (shift=true) when placing multiple foundations
+            this.buildingManager.handleTileClick(tile.x, tile.y, true);
+          });
+        } else {
+          // If shift was released, we already placed a single foundation in the keyup handler
+          console.log("Shift not held at end of drag");
+        }
+      }
+      
+      // Clear build preview and reset state
+      this.clearBuildPreview();
+      this.buildDragging = false;
+      this.buildStartTile = null;
+    }
+    
+    // Handle selection box completion
     if (this.isSelecting && event.button === 0) {
       // Finish selection
       this.selectionEndX = event.clientX;
@@ -183,6 +374,12 @@ export class UIManager {
       this.isDragging = false;
       this.selectionBox.clear();
     }
+  }
+  
+  private getTileAtScreenPosition(screenX: number, screenY: number): GridPosition {
+    // Convert screen coordinates to world coordinates
+    const point = new PIXI.Point(screenX, screenY);
+    return this.villagerManager.getIsoUtils().toIso(screenX, screenY);
   }
   
   private updateSelectionBox(): void {
@@ -267,8 +464,9 @@ export class UIManager {
     }
     
     // Check if we're in build mode
-    if (this.buildingManager.getBuildMode()) {
-      this.buildingManager.handleTileClick(x, y);
+    if (this.buildingManager.getBuildMode() === 'wall') {
+      const isShiftDown = this.shiftKeyHandler();
+      this.buildingManager.handleTileClick(x, y, isShiftDown);
       return;
     }
     
@@ -303,6 +501,16 @@ export class UIManager {
   
   private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): void {
     console.log(`Right click at grid coordinates: x=${x}, y=${y}`);
+    
+    // Check if there's a foundation at this position
+    const foundation = this.gameMap.findFoundationAtPosition(x, y);
+    if (foundation) {
+      const selectedVillagers = this.villagerManager.getSelectedVillagers();
+      if (selectedVillagers.length > 0) {
+        this.buildingManager.assignVillagersToFoundation(selectedVillagers, foundation);
+        return;
+      }
+    }
     
     const selectedVillagers = this.villagerManager.getSelectedVillagers();
     
