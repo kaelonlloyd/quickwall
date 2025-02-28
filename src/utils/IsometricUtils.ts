@@ -24,20 +24,62 @@ export class IsometricUtils {
   }
 
   // Convert screen coordinates to isometric grid coordinates
-  public toIso(screenX: number, screenY: number): GridPosition {
-    // Adjust coordinates relative to world container
-    const adjustedX = screenX - this.worldX;
-    const adjustedY = screenY - this.worldY;
-    
-    // Convert to tile coordinates
-    const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
-    const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
-    
-    return {
-      x: Math.floor(tileX),
-      y: Math.floor(tileY)
-    };
-  }
+// Convert screen coordinates to isometric grid coordinates
+public toIso(screenX: number, screenY: number): GridPosition {
+  // Detailed logging for coordinate conversion
+  console.log('Conversion Inputs:', {
+    screenX, 
+    screenY, 
+    worldX: this.worldX, 
+    worldY: this.worldY
+  });
+
+  // Adjust coordinates relative to world container
+  const adjustedX = screenX - this.worldX;
+  const adjustedY = screenY - this.worldY;
+  
+  // Convert to tile coordinates using more precise calculation
+  const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
+  const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
+  
+  // Detailed logging of intermediate calculations
+  console.log('Conversion Calculations:', {
+    adjustedX, 
+    adjustedY, 
+    calculatedTileX: tileX, 
+    calculatedTileY: tileY
+  });
+
+  // Round to nearest whole number
+  const result = {
+    x: Math.round(tileX),
+    y: Math.round(tileY)
+  };
+
+  console.log('Conversion Result:', result);
+  return result;
+}
+
+// New method to help debug coordinate translation
+public debugCoordinateConversion(screenX: number, screenY: number): void {
+  console.log('Coordinate Conversion Debug:');
+  console.log('World Container Position:', { x: this.worldX, y: this.worldY });
+  console.log('Screen Coordinates:', { screenX, screenY });
+  
+  const adjustedX = screenX - this.worldX;
+  const adjustedY = screenY - this.worldY;
+  
+  console.log('Adjusted Coordinates:', { adjustedX, adjustedY });
+  
+  const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
+  const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
+  
+  console.log('Calculated Tile Coordinates:', { tileX, tileY });
+  console.log('Rounded Tile Coordinates:', { 
+    x: Math.round(tileX), 
+    y: Math.round(tileY) 
+  });
+}
 
   // Check if a position is adjacent to the villager
   public isAdjacentToVillager(villager: Villager, x: number, y: number): boolean {

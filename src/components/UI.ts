@@ -2,8 +2,7 @@ import * as PIXI from 'pixi.js';
 import { BuildingManager } from './Building';
 import { GameMap } from './Map';
 import { VillagerManager } from './Villager';
-import { GridPosition } from '../types';
-import { WallFoundation } from './WallManager';
+import { GridPosition, TileType } from '../types';
 
 export class UIManager {
   private app: PIXI.Application;
@@ -100,6 +99,8 @@ export class UIManager {
     canvas.addEventListener('mousemove', this.onMouseMove.bind(this));
     canvas.addEventListener('mouseup', this.onMouseUp.bind(this));
 
+
+    
     // Set up interactive events on ground tiles
     for (let i = 0; i < this.groundLayer.children.length; i++) {
       const tile = this.groundLayer.children[i] as PIXI.Graphics;
@@ -144,12 +145,19 @@ export class UIManager {
         });
         
         // Add hover effects
+
         tile.on('pointerover', () => {
           this.hoveredTile = { x: tileX, y: tileY };
           
           // If in wall build mode, provide visual feedback
           if (this.buildingManager.getBuildMode() === 'wall') {
-            tile.tint = 0xAAAAAA; // Slightly grey to indicate potential build
+            // Check if wall can be placed
+            const canPlaceWall = this.gameMap.getTile(tileX, tileY)?.type !== TileType.TREE &&
+                                 this.gameMap.getTile(tileX, tileY)?.type !== TileType.STONE &&
+                                 this.gameMap.getTile(tileX, tileY)?.type !== TileType.WALL;
+            
+            // Visual indication based on placement possibility
+            tile.tint = canPlaceWall ? 0x00FF00 : 0xFF0000; // Green if placeable, red if not
             
             // If build dragging, show preview
             if (this.buildDragging && this.buildStartTile) {
@@ -159,11 +167,15 @@ export class UIManager {
             tile.tint = 0xDDDDDD;
           }
         });
+          
+          tile.on('pointerout', () => {
+            this.hoveredTile = { x: -1, y: -1 };
+            tile.tint = 0xFFFFFF;
+          });
+
         
-        tile.on('pointerout', () => {
-          this.hoveredTile = { x: -1, y: -1 };
-          tile.tint = 0xFFFFFF;
-        });
+
+
       }
     }
     
@@ -189,33 +201,29 @@ export class UIManager {
     
     // Create preview for each tile
     tiles.forEach(tile => {
-      if (this.gameMap.isTileWalkable(tile.x, tile.y)) {
-        // Get screen position for tile
-        const screenPos = this.villagerManager.getIsoUtils().toScreen(tile.x, tile.y);
+      // Check if tile is placeable (on a grass tile)
+      const tileAtPosition = this.gameMap.getTile(tile.x, tile.y);
+      const canPlaceWall = tileAtPosition && 
+        (tileAtPosition.type === TileType.GRASS || 
+         tileAtPosition.type === TileType.RUBBLE);
+      
+      if (canPlaceWall) {
+        // Find the corresponding tile in the ground layer
+        const groundTiles = this.gameMap.getGroundLayerTiles();
+        const matchingTile = groundTiles.find(
+          t => (t as any).tileX === tile.x && (t as any).tileY === tile.y
+        );
         
-        // Create preview graphic
-        const preview = new PIXI.Graphics();
-        preview.lineStyle(2, 0xFFFF00, 0.8);
-        preview.beginFill(0xFFFF00, 0.3);
-        preview.drawRect(0, 0, 64, 32);
-        preview.endFill();
-        preview.x = screenPos.x;
-        preview.y = screenPos.y;
-        
-        this.app.stage.addChild(preview);
-        this.buildPreviewTiles.push(preview);
+        if (matchingTile) {
+          // Highlight the existing tile
+          matchingTile.tint = canPlaceWall ? 0x00FF00 : 0xFF0000;
+          this.buildPreviewTiles.push(matchingTile);
+        }
       }
     });
   }
   
-  private clearBuildPreview(): void {
-    this.buildPreviewTiles.forEach(preview => {
-      this.app.stage.removeChild(preview);
-      preview.destroy();
-    });
-    this.buildPreviewTiles = [];
-  }
-  
+
   private calculateLineTiles(startTile: GridPosition, endTile: GridPosition): GridPosition[] {
     const tiles: GridPosition[] = [];
     
@@ -251,6 +259,16 @@ export class UIManager {
     }
     
     return tiles;
+  }
+  
+  private clearBuildPreview(): void {
+    // Restore original tint for all previously previewed tiles
+    this.buildPreviewTiles.forEach(preview => {
+      preview.tint = 0xFFFFFF;
+    });
+    
+    // Clear the preview tiles array
+    this.buildPreviewTiles = [];
   }
   
   private handleObjectLayerClick(event: PIXI.FederatedPointerEvent): void {
@@ -308,7 +326,7 @@ export class UIManager {
       }
     }
     
-    // Update selection box if selecting
+    // Existing selection box logic
     if (this.isSelecting) {
       const dragDistance = Math.sqrt(
         Math.pow(event.clientX - this.selectionStartX, 2) + 
@@ -351,6 +369,9 @@ export class UIManager {
       
       // Clear build preview and reset state
       this.clearBuildPreview();
+      
+      // Exit build mode completely
+      this.buildingManager.setBuildMode(null);
       this.buildDragging = false;
       this.buildStartTile = null;
     }
@@ -375,12 +396,7 @@ export class UIManager {
       this.selectionBox.clear();
     }
   }
-  
-  private getTileAtScreenPosition(screenX: number, screenY: number): GridPosition {
-    // Convert screen coordinates to world coordinates
-    const point = new PIXI.Point(screenX, screenY);
-    return this.villagerManager.getIsoUtils().toIso(screenX, screenY);
-  }
+
   
   private updateSelectionBox(): void {
     // Calculate the box dimensions
@@ -454,8 +470,13 @@ export class UIManager {
     };
   }
   
+
   private handleLeftClick(x: number, y: number, isCtrlPressed: boolean = false): void {
-    console.log(`Left click at grid coordinates: x=${x}, y=${y}, ctrl=${isCtrlPressed}`);
+    console.log(`Left click - Reported coordinates: x=${x}, y=${y}`);
+    console.log(`Tile details:`, {
+      mapTile: this.gameMap.getTile(x, y),
+      mapTileType: this.gameMap.getTile(x, y)?.type ? TileType[this.gameMap.getTile(x, y)!.type] : 'undefined'
+    });
     
     // Validate coordinates
     if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) {
@@ -481,6 +502,20 @@ export class UIManager {
       this.villagerManager.clearSelection();
     }
   }
+
+  private getTileAtScreenPosition(screenX: number, screenY: number): GridPosition {
+    const point = new PIXI.Point(screenX, screenY);
+    const tilePos = this.villagerManager.getIsoUtils().toIso(screenX, screenY);
+    
+    console.log('Screen to Tile Conversion:', {
+      screenX, 
+      screenY, 
+      convertedTile: tilePos
+    });
+    
+    return tilePos;
+  }
+
   
   private findVillagerAtPosition(x: number, y: number): any | null {
     const allVillagers = this.villagerManager.getAllVillagers();

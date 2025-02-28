@@ -63,6 +63,7 @@ export class GameMap {
     console.log("Total tiles created:", this.groundLayer.children.length);
   }
   
+
   private drawTile(x: number, y: number): void {
     const tile = this.mapData.tiles[y][x];
     const pos = this.isoUtils.toScreen(x, y);
@@ -82,8 +83,8 @@ export class GameMap {
     
     tileSprite.endFill();
     
-    // Add slight outlines
-    tileSprite.lineStyle(1, COLORS.GRASS_OUTLINE, 0.3);
+    // Add grid lines - thin and mostly transparent white
+    tileSprite.lineStyle(1, 0xFFFFFF, 0.2);
     tileSprite.moveTo(0, TILE_HEIGHT / 2);
     tileSprite.lineTo(TILE_WIDTH / 2, 0);
     tileSprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
@@ -115,7 +116,7 @@ export class GameMap {
       this.createRubbleTile(x, y);
     }
   }
-  
+
   private createTileObject(type: TileType, x: number, y: number): PIXI.Graphics {
     const objectSprite = new PIXI.Graphics();
     
@@ -132,17 +133,17 @@ export class GameMap {
         break;
         
       case TileType.TREE:
-        // Tree trunk - centered
+        // Tree trunk - more centered and thinner
         objectSprite.beginFill(COLORS.TREE_TRUNK);
-        objectSprite.drawRect(TILE_WIDTH / 2 - 5, TILE_HEIGHT / 2, 10, TILE_HEIGHT / 2);
+        objectSprite.drawRect(TILE_WIDTH / 2 - 3, TILE_HEIGHT / 3, 6, TILE_HEIGHT / 3);
         objectSprite.endFill();
         
-        // Tree top (improved triangle shape, centered)
+        // Tree top (triangle shape, centered near top of tile)
         objectSprite.beginFill(COLORS.TREE_LEAVES);
         objectSprite.drawPolygon([
-          TILE_WIDTH / 2, 0, // Top center point
-          TILE_WIDTH / 2 - 25, TILE_HEIGHT / 2, // Bottom left
-          TILE_WIDTH / 2 + 25, TILE_HEIGHT / 2  // Bottom right
+          TILE_WIDTH / 2, TILE_HEIGHT / 6, // Top point
+          TILE_WIDTH / 2 - 15, TILE_HEIGHT / 2, // Bottom left
+          TILE_WIDTH / 2 + 15, TILE_HEIGHT / 2  // Bottom right
         ]);
         objectSprite.endFill();
         break;
@@ -222,19 +223,9 @@ export class GameMap {
   }
   
   public isTileWalkable(x: number, y: number): boolean {
-    // Validate input coordinates
-    if (typeof x !== 'number' || typeof y !== 'number') {
-      console.error('Invalid coordinate types:', { x, y });
-      return false;
-    }
-    
-    // Round coordinates to nearest integer
-    const roundedX = Math.round(x);
-    const roundedY = Math.round(y);
-    
-    // Check map boundaries
-    if (roundedX < 0 || roundedX >= MAP_WIDTH || roundedY < 0 || roundedY >= MAP_HEIGHT) {
-      console.warn(`Tile outside map boundaries: x=${roundedX}, y=${roundedY}`);
+    // More robust boundary and type checking
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
+      console.warn(`Tile outside map boundaries: x=${x}, y=${y}`);
       return false;
     }
     
@@ -244,25 +235,10 @@ export class GameMap {
       return false;
     }
     
-    // Additional safety check for specific tile
-    const tileRow = this.mapData.tiles[roundedY];
-    if (!tileRow) {
-      console.error(`No tile row found at y=${roundedY}`);
-      return false;
-    }
+    const tile = this.mapData.tiles[Math.floor(y)][Math.floor(x)];
     
-    const tile = tileRow[roundedX];
-    if (!tile) {
-      console.error(`No tile found at coordinates: x=${roundedX}, y=${roundedY}`);
-      return false;
-    }
-    
-    // Handle rubble tiles which are walkable
-    if (tile.type === TileType.RUBBLE) {
-      return true;
-    }
-    
-    return tile.walkable;
+    // Walkable if tile is grass or rubble
+    return tile.type === TileType.GRASS || tile.type === TileType.RUBBLE;
   }
   
   public addWall(x: number, y: number): boolean {
@@ -346,9 +322,18 @@ export class GameMap {
 
   
   public addWallFoundation(x: number, y: number): WallFoundation | null {
-    // Check if we can place a wall here
-    if (!this.isTileWalkable(x, y)) {
-      console.warn(`Cannot add wall: tile is not walkable at x=${x}, y=${y}`);
+    // Validate input with more robust boundary checking
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
+      console.error(`Invalid wall foundation coordinates: x=${x}, y=${y}`);
+      return null;
+    }
+
+    // Check the tile details
+    const tile = this.mapData.tiles[y][x];
+    
+    // Prevent placing on non-grass tiles
+    if (tile.type !== TileType.GRASS) {
+      console.warn(`Cannot add wall: tile is not grass. Current type: ${TileType[tile.type]} at x=${x}, y=${y}`);
       return null;
     }
     
@@ -356,10 +341,21 @@ export class GameMap {
     this.mapData.tiles[y][x].type = TileType.WALL;
     this.mapData.tiles[y][x].walkable = false;
     
+    // Remove any existing sprite from the tile
+    if (tile.sprite) {
+      this.objectLayer.removeChild(tile.sprite);
+      tile.sprite = null;
+    }
+    
     // Create wall foundation
-    return this.wallManager.createWallFoundation(x, y);
+    const foundation = this.wallManager.createWallFoundation(x, y);
+    
+    console.log('Wall foundation creation:', foundation ? 'Successful' : 'Failed');
+    
+    return foundation;
   }
-  
+
+
   public getWallFoundations(): WallFoundation[] {
     return this.wallManager.getWallFoundations();
   }

@@ -1,5 +1,5 @@
 import { BUILDING_COSTS } from '../constants';
-import { Villager, BuildTask, WallFoundationData } from '../types';
+import { Villager, BuildTask, WallFoundationData, TileType } from '../types';
 import { GameMap } from './Map';
 import { ResourceManager } from '../utils/ResourceManager';
 import { VillagerManager } from './Villager';
@@ -157,7 +157,11 @@ export class BuildingManager {
     
     // Place wall foundation
     const foundation = this.gameMap.addWallFoundation(x, y);
-    if (!foundation) return;
+    if (!foundation) {
+      // If placement fails, show a visual indicator or play a sound
+      console.log('Wall placement failed');
+      return;
+    }
     
     // Deduct resources
     this.resourceManager.deductResources(BUILDING_COSTS.wall);
@@ -170,6 +174,7 @@ export class BuildingManager {
       this.setBuildMode(null);
     }
   }
+
   
   public updateFoundationBuilding(delta: number): void {
     this.gameMap.updateFoundationBuilding(delta);

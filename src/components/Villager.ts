@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js';
-import { COLORS, TILE_HEIGHT, TILE_WIDTH, VILLAGER_SPEED } from '../constants';
+import { COLORS, TILE_HEIGHT, TILE_WIDTH, VILLAGER_SPEED, MAP_HEIGHT, MAP_WIDTH } from '../constants';
 import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { GameMap } from './Map';
@@ -275,8 +275,8 @@ export class VillagerManager {
     }
     
     // Ensure target is within map bounds
-    const clampedX = Math.max(0, Math.min(targetX, 19));
-    const clampedY = Math.max(0, Math.min(targetY, 19));
+    const clampedX = Math.max(0, Math.min(Math.floor(targetX), MAP_WIDTH - 1));
+    const clampedY = Math.max(0, Math.min(Math.floor(targetY), MAP_HEIGHT - 1));
     
     // Find path to target
     const pathFinder = new PathFinder(this.gameMap);
