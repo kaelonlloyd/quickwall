@@ -7,6 +7,7 @@ import { GameMap } from './components/Map';
 import { VillagerManager } from './components/Villager';
 import { BuildingManager } from './components/Building';
 import { UIManager } from './components/UI';
+import { WallManager } from './components/WallManager';
 
 export class Game {
   private app!: PIXI.Application;
@@ -22,6 +23,7 @@ export class Game {
   private villagerManager!: VillagerManager;
   private buildingManager!: BuildingManager;
   private uiManager!: UIManager;
+  private wallManager!: WallManager;
   
   
   constructor() {
@@ -97,9 +99,27 @@ export class Game {
     
     this.resourceManager = new ResourceManager(initialResources);
     
-    // Initialize game components
-    this.gameMap = new GameMap(this.groundLayer, this.objectLayer, this.isoUtils);
+
     this.villagerManager = new VillagerManager(this.unitLayer, this.isoUtils, this.gameMap);
+
+    this.wallManager = new WallManager(
+      this.objectLayer, 
+      this.isoUtils, 
+      (x, y) => this.gameMap.getVillagersOnTile(x, y),
+      (foundation) => this.gameMap.handleVillagersOnFoundation(foundation)
+    );
+    
+
+    this.gameMap = new GameMap(
+      this.groundLayer, 
+      this.objectLayer, 
+      this.isoUtils, 
+      this.villagerManager,
+      this.wallManager
+    );
+
+
+    
     this.buildingManager = new BuildingManager(this.gameMap, this.resourceManager, this.villagerManager);
     this.uiManager = new UIManager(
       this.app, 

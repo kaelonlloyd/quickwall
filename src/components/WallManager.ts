@@ -2,6 +2,7 @@ import * as PIXI from 'pixi.js';
 import { COLORS, TILE_HEIGHT, TILE_WIDTH } from '../constants';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { Villager } from '../types';
+import { GameMap } from './Map';
 
 export interface WallFoundation {
   x: number;
@@ -16,21 +17,130 @@ export interface WallFoundation {
   status: 'foundation' | 'building' | 'complete';
   occupiedPositions: { x: number, y: number }[]; // Track positions occupied by villagers
 }
-
 export class WallManager {
-  private objectLayer: PIXI.Container;
-  private isoUtils: IsometricUtils;
-  private wallFoundations: WallFoundation[] = [];
-  private static MAX_FOUNDATIONS = 100; // Limit total number of foundations
+    private getVillagersOnTile: (x: number, y: number) => Villager[];
+    private handleVillagersOnFoundation: (foundation: WallFoundation) => void;
 
-  constructor(objectLayer: PIXI.Container, isoUtils: IsometricUtils) {
-    this.objectLayer = objectLayer;
-    this.isoUtils = isoUtils;
+    private objectLayer: PIXI.Container;
+    private isoUtils: IsometricUtils;
+    private wallFoundations: WallFoundation[] = [];
+    private static MAX_FOUNDATIONS = 100;
     
-    // Enable sorting in the object layer for proper depth
-    this.objectLayer.sortableChildren = true;
+    
+    constructor(
+      objectLayer: PIXI.Container, 
+      isoUtils: IsometricUtils,
+      getVillagersOnTile: (x: number, y: number) => Villager[],
+      handleVillagersOnFoundation: (foundation: WallFoundation) => void
+    ) {
+      this.objectLayer = objectLayer;
+      this.isoUtils = isoUtils;
+      this.getVillagersOnTile = getVillagersOnTile;
+      this.handleVillagersOnFoundation = handleVillagersOnFoundation;
+      this.objectLayer.sortableChildren = true;
+    }
+  
+    public getWallFoundations(): WallFoundation[] {
+        return this.wallFoundations;
+      }
+
+    public updateFoundationBuilding(delta: number): void {
+      const foundationsToUpdate = [...this.wallFoundations];
+      
+      foundationsToUpdate.forEach(foundation => {
+        // Use the passed method instead of directly accessing GameMap
+        const villagersOnTile = this.getVillagersOnTile(foundation.x, foundation.y);
+        
+        if (villagersOnTile.length > 0) {
+          // Use the passed method to handle villagers
+          this.handleVillagersOnFoundation(foundation);
+          
+          if (villagersOnTile.length > 0) {
+            console.log('Pausing wall foundation - tile not clear');
+            return;
+          }
+        
+        
+      // Existing building logic
+      if (foundation.isBuilding && foundation.assignedVillagers.length > 0) {
+        // Calculate build speed based on number of villagers
+        const buildSpeed = 7 / (foundation.assignedVillagers.length + 2);
+        
+        foundation.buildProgress += delta * buildSpeed;
+        
+        // Update progress bar
+        foundation.progressBar.visible = true;
+        foundation.progressBar.scale.x = Math.min(1, foundation.buildProgress / foundation.maxHealth);
+        
+        // Create pulsing effect for building foundations
+        this.applyPulseEffect(foundation);
+        
+        // Update wall sprite as it builds
+        if (foundation.status === 'foundation' && foundation.buildProgress > 0) {
+          foundation.status = 'building';
+          foundation.sprite.clear();
+          foundation.sprite.beginFill(COLORS.WALL, 0.6);
+          foundation.sprite.lineStyle(2, COLORS.WALL, 0.8);
+          foundation.sprite.moveTo(TILE_WIDTH / 2, 0);
+          foundation.sprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
+          foundation.sprite.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
+          foundation.sprite.lineTo(0, TILE_HEIGHT / 2);
+          foundation.sprite.lineTo(TILE_WIDTH / 2, 0);
+          foundation.sprite.endFill();
+        }
+        
+        // Check if building is complete
+        if (foundation.buildProgress >= foundation.maxHealth) {
+          this.completeFoundation(foundation);
+        }
+      }
+    }});
   }
 
+  private applyPulseEffect(foundation: WallFoundation): void {
+    // Create a pulsing animation effect for building foundations
+    const time = Date.now() * 0.005; // Use time for smooth animation
+    const pulseScale = 1 + Math.sin(time) * 0.1; // Subtle scaling
+    const pulseAlpha = 0.6 + Math.sin(time) * 0.2; // Subtle alpha change
+    
+    foundation.sprite.scale.set(pulseScale);
+    foundation.sprite.alpha = pulseAlpha;
+  }
+
+  private completeFoundation(foundation: WallFoundation): void {
+    // Mark foundation as fully built
+    foundation.isBuilding = false;
+    foundation.buildProgress = foundation.maxHealth;
+    foundation.status = 'complete';
+    
+    // Fully solid wall appearance
+    foundation.sprite.clear();
+    foundation.sprite.beginFill(COLORS.WALL);
+    foundation.sprite.moveTo(TILE_WIDTH / 2, 0);
+    foundation.sprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
+    foundation.sprite.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
+    foundation.sprite.lineTo(0, TILE_HEIGHT / 2);
+    foundation.sprite.lineTo(TILE_WIDTH / 2, 0);
+    foundation.sprite.endFill();
+    
+    // Stop pulsing and reset scale/alpha
+    foundation.sprite.scale.set(1);
+    foundation.sprite.alpha = 1;
+    
+    // Hide progress bar
+    foundation.progressBar.visible = false;
+    
+    // Clear assigned villagers
+    foundation.assignedVillagers.forEach(villager => {
+      if (villager.currentBuildTask) {
+        villager.currentBuildTask = undefined;
+      }
+    });
+    foundation.assignedVillagers = [];
+    foundation.occupiedPositions = [];
+  }
+
+  // Existing methods like createWallFoundation, getWallFoundations, etc.
   public createWallFoundation(x: number, y: number): WallFoundation | null {
     // Check if we've exceeded max foundations
     if (this.wallFoundations.length >= WallManager.MAX_FOUNDATIONS) {
@@ -143,121 +253,23 @@ export class WallManager {
     foundation.assignedVillagers = [];
   }
 
-  public updateFoundationBuilding(delta: number): void {
-    const foundationsToUpdate = [...this.wallFoundations];
-    
-    foundationsToUpdate.forEach(foundation => {
-      if (foundation.isBuilding && foundation.assignedVillagers.length > 0) {
-        // Calculate build speed based on number of villagers
-        const buildSpeed = 7 / (foundation.assignedVillagers.length + 2);
-        
-        foundation.buildProgress += delta * buildSpeed;
-        
-        // Update progress bar
-        foundation.progressBar.visible = true;
-        foundation.progressBar.scale.x = Math.min(1, foundation.buildProgress / foundation.maxHealth);
-        
-        // Create pulsing effect for building foundations
-        this.applyPulseEffect(foundation);
-        
-        // Update wall sprite as it builds
-        if (foundation.status === 'foundation' && foundation.buildProgress > 0) {
-          foundation.status = 'building';
-          foundation.sprite.clear();
-          foundation.sprite.beginFill(COLORS.WALL, 0.6);
-          foundation.sprite.lineStyle(2, COLORS.WALL, 0.8);
-          foundation.sprite.moveTo(TILE_WIDTH / 2, 0);
-          foundation.sprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
-          foundation.sprite.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
-          foundation.sprite.lineTo(0, TILE_HEIGHT / 2);
-          foundation.sprite.lineTo(TILE_WIDTH / 2, 0);
-          foundation.sprite.endFill();
-        }
-        
-        // Check if building is complete
-        if (foundation.buildProgress >= foundation.maxHealth) {
-          this.completeFoundation(foundation);
-        }
-      }
-    });
-  }
 
-  private applyPulseEffect(foundation: WallFoundation): void {
-    // Create a pulsing animation effect for building foundations
-    const time = Date.now() * 0.005; // Use time for smooth animation
-    const pulseScale = 1 + Math.sin(time) * 0.1; // Subtle scaling
-    const pulseAlpha = 0.6 + Math.sin(time) * 0.2; // Subtle alpha change
-    
-    foundation.sprite.scale.set(pulseScale);
-    foundation.sprite.alpha = pulseAlpha;
-  }
-
-  private completeFoundation(foundation: WallFoundation): void {
-    // Mark foundation as fully built
-    foundation.isBuilding = false;
-    foundation.buildProgress = foundation.maxHealth;
-    foundation.status = 'complete';
-    
-    // Fully solid wall appearance
-    foundation.sprite.clear();
-    foundation.sprite.beginFill(COLORS.WALL);
-    foundation.sprite.moveTo(TILE_WIDTH / 2, 0);
-    foundation.sprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
-    foundation.sprite.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
-    foundation.sprite.lineTo(0, TILE_HEIGHT / 2);
-    foundation.sprite.lineTo(TILE_WIDTH / 2, 0);
-    foundation.sprite.endFill();
-    
-    // Stop pulsing and reset scale/alpha
-    foundation.sprite.scale.set(1);
-    foundation.sprite.alpha = 1;
-    
-    // Hide progress bar
-    foundation.progressBar.visible = false;
-    
-    // Clear assigned villagers
-    foundation.assignedVillagers.forEach(villager => {
-      if (villager.currentBuildTask) {
-        villager.currentBuildTask = undefined;
-      }
-    });
-    foundation.assignedVillagers = [];
-    foundation.occupiedPositions = [];
-  }
-
-  public getWallFoundations(): WallFoundation[] {
-    return this.wallFoundations;
-  }
-  
-  // Find an available position around the foundation for a villager to build from
+  // Method to find an available position around the foundation for a villager to build from
   public findAvailableBuildPosition(foundation: WallFoundation): { x: number, y: number } | null {
-    // Potential adjacent tiles around the foundation - include more diagonal positions
-    const potentialTiles = [
-      // Cardinal directions
+    // Potential adjacent tiles around the foundation
+    const adjacentPositions = [
       { x: foundation.x - 1, y: foundation.y },     // Left
       { x: foundation.x + 1, y: foundation.y },     // Right
       { x: foundation.x, y: foundation.y - 1 },     // Top
       { x: foundation.x, y: foundation.y + 1 },     // Bottom
-      
-      // Diagonal directions
       { x: foundation.x - 1, y: foundation.y - 1 }, // Top-Left
       { x: foundation.x + 1, y: foundation.y - 1 }, // Top-Right
       { x: foundation.x - 1, y: foundation.y + 1 }, // Bottom-Left
       { x: foundation.x + 1, y: foundation.y + 1 }, // Bottom-Right
-      
-      // Additional in-between positions for more granular placement
-      { x: foundation.x - 1, y: foundation.y - 0.5 }, // Left-TopLeft
-      { x: foundation.x - 1, y: foundation.y + 0.5 }, // Left-BottomLeft
-      { x: foundation.x + 1, y: foundation.y - 0.5 }, // Right-TopRight
-      { x: foundation.x + 1, y: foundation.y + 0.5 }, // Right-BottomRight
-      { x: foundation.x - 0.5, y: foundation.y - 1 }, // TopLeft-Top
-      { x: foundation.x + 0.5, y: foundation.y - 1 }, // TopRight-Top
-      { x: foundation.x - 0.5, y: foundation.y + 1 }, // BottomLeft-Bottom
-      { x: foundation.x + 0.5, y: foundation.y + 1 }  // BottomRight-Bottom
     ];
     
-    // Filter to valid positions (bounds check and not occupied)
-    const availablePositions = potentialTiles.filter(pos => {
+    // Filter to valid positions
+    const availablePositions = adjacentPositions.filter(pos => {
       // Check map boundaries
       if (pos.x < 0 || pos.x >= 20 || pos.y < 0 || pos.y >= 20) {
         return false;
@@ -273,7 +285,7 @@ export class WallManager {
       return null;
     }
     
-    // Sort positions by distance to foundation center for more predictable assignment
+    // Sort positions by distance to foundation center
     availablePositions.sort((a, b) => {
       const distA = Math.sqrt(Math.pow(a.x - foundation.x, 2) + Math.pow(a.y - foundation.y, 2));
       const distB = Math.sqrt(Math.pow(b.x - foundation.x, 2) + Math.pow(b.y - foundation.y, 2));

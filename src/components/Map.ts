@@ -1,8 +1,9 @@
 import * as PIXI from 'pixi.js';
 import { COLORS, MAP_HEIGHT, MAP_WIDTH, TILE_HEIGHT, TILE_WIDTH, TILE_PROPERTIES } from '../constants';
-import { GridPosition, MapData, Tile, TileType } from '../types';
+import { GridPosition, MapData, Tile, TileType, Villager} from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { WallManager, WallFoundation } from './WallManager';
+import { VillagerManager } from './Villager';
 
 export class GameMap {
   private mapData: MapData;
@@ -10,15 +11,31 @@ export class GameMap {
   private objectLayer: PIXI.Container;
   private isoUtils: IsometricUtils;
   public wallManager: WallManager;
-  
-  constructor(groundLayer: PIXI.Container, objectLayer: PIXI.Container, isoUtils: IsometricUtils) {
+  private villagerManager: VillagerManager;
+  constructor(
+    groundLayer: PIXI.Container, 
+    objectLayer: PIXI.Container, 
+    isoUtils: IsometricUtils,
+    villagerManager: VillagerManager,
+    wallManager: WallManager
+  ) {
     this.groundLayer = groundLayer;
     this.objectLayer = objectLayer;
     this.isoUtils = isoUtils;
-    this.wallManager = new WallManager(objectLayer, isoUtils);
+    this.villagerManager = villagerManager;
+    this.wallManager = wallManager;
+    
     this.mapData = { tiles: [] };
     
     this.initMap();
+  }
+  
+  // Ensure this method exists
+  public getVillagerManager(): VillagerManager {
+    if (!this.villagerManager) {
+      throw new Error('VillagerManager not initialized');
+    }
+    return this.villagerManager;
   }
   
   public initMap(): void {
@@ -222,61 +239,8 @@ export class GameMap {
     }
   }
   
-  public isTileWalkable(x: number, y: number): boolean {
-    // More robust boundary and type checking
-    const floorX = Math.floor(x);
-    const floorY = Math.floor(y);
-    
-    if (floorX < 0 || floorX >= MAP_WIDTH || floorY < 0 || floorY >= MAP_HEIGHT) {
-      console.warn(`Tile outside map boundaries: x=${floorX}, y=${floorY}`);
-      return false;
-    }
-    
-    // Ensure mapData and tiles exist before accessing
-    if (!this.mapData || !this.mapData.tiles) {
-      console.error('Map data is incomplete or undefined');
-      return false;
-    }
-    
-    const tile = this.mapData.tiles[floorY][floorX];
-    
-    // Check if there's a wall foundation at this location
-    const foundation = this.findFoundationAtPosition(floorX, floorY);
-    
-    // Debug logging for walkability
-    const debugWalkabilityCheck = () => {
-      console.log('Walkability Check:', {
-        coordinates: { x: floorX, y: floorY },
-        tileType: TileType[tile.type],
-        foundationStatus: foundation ? foundation.status : 'no foundation',
-        isWalkable: this.isCurrentlyWalkable(tile, foundation)
-      });
-    };
-    
-    const walkable = this.isCurrentlyWalkable(tile, foundation);
-    
-    if (!walkable) {
-      debugWalkabilityCheck();
-    }
-    
-    return walkable;
-  }
+
   
-  private isCurrentlyWalkable(tile: Tile, foundation: WallFoundation | null): boolean {
-    // Walkable conditions:
-    // 1. Tile is grass or rubble
-    // 2. Wall foundation exists but is not in 'building' or 'complete' state
-    if (tile.type === TileType.GRASS || tile.type === TileType.RUBBLE) {
-      return true;
-    }
-    
-    // If foundation exists and is not in building state, it's walkable
-    if (foundation && foundation.status !== 'building' && foundation.status !== 'complete') {
-      return true;
-    }
-    
-    return false;
-  }
   public addWall(x: number, y: number): boolean {
     // Validate input
     const roundedX = Math.round(x);
@@ -481,6 +445,116 @@ export class GameMap {
       this.mapData.tiles[y][x].type = TileType.GRASS;
       this.mapData.tiles[y][x].walkable = true;
       
+      return true;
+    }
+    
+    return false;
+  }
+
+
+
+  // New method to check for villagers on a specific tile
+  public getVillagersOnTile(x: number, y: number): Villager[] {
+    const villagerManager = this.getVillagerManager(); // You'll need to implement this method
+    return villagerManager.getAllVillagers().filter(villager => 
+      Math.floor(villager.x) === x && Math.floor(villager.y) === y
+    );
+  }
+  
+  // Method to find alternative walkable positions for a villager
+  public findAlternativeWalkableTile(x: number, y: number): GridPosition | null {
+    const adjacentTiles: GridPosition[] = [
+      { x: x - 1, y: y },     // Left
+      { x: x + 1, y: y },     // Right
+      { x: x, y: y - 1 },     // Top
+      { x: x, y: y + 1 },     // Bottom
+      { x: x - 1, y: y - 1 }, // Top-Left
+      { x: x + 1, y: y - 1 }, // Top-Right
+      { x: x - 1, y: y + 1 }, // Bottom-Left
+      { x: x + 1, y: y + 1 }  // Bottom-Right
+    ];
+    
+    const walkableTiles = adjacentTiles.filter(tile => 
+      tile.x >= 0 && tile.x < MAP_WIDTH && 
+      tile.y >= 0 && tile.y < MAP_HEIGHT && 
+      this.isTileWalkable(tile.x, tile.y)
+    );
+    
+    return walkableTiles.length > 0 ? walkableTiles[0] : null;
+  }
+  
+  // Method to handle villagers on foundation tiles during building
+  public handleVillagersOnFoundation(foundation: WallFoundation): void {
+    // Find villagers on this foundation's tile
+    const villagersOnTile = this.getVillagersOnTile(foundation.x, foundation.y);
+    
+    villagersOnTile.forEach(villager => {
+      // Try to move the villager to an alternative walkable tile
+      const alternativeTile = this.findAlternativeWalkableTile(foundation.x, foundation.y);
+      
+      if (alternativeTile) {
+        // Move villager to the alternative tile
+        this.getVillagerManager().moveVillager(
+          villager, 
+          alternativeTile.x, 
+          alternativeTile.y
+        );
+      } else {
+        // No alternative tile available - prevent building
+        foundation.isBuilding = false;
+        console.warn('Cannot build wall - villager blocking tile');
+      }
+    });
+  }public isTileWalkable(x: number, y: number): boolean {
+    // More robust boundary and type checking
+    const floorX = Math.floor(x);
+    const floorY = Math.floor(y);
+    
+    if (floorX < 0 || floorX >= MAP_WIDTH || floorY < 0 || floorY >= MAP_HEIGHT) {
+      console.warn(`Tile outside map boundaries: x=${floorX}, y=${floorY}`);
+      return false;
+    }
+    
+    // Ensure mapData and tiles exist before accessing
+    if (!this.mapData || !this.mapData.tiles) {
+      console.error('Map data is incomplete or undefined');
+      return false;
+    }
+    
+    const tile = this.mapData.tiles[floorY][floorX];
+    
+    // Check if there's a wall foundation at this location
+    const foundation = this.findFoundationAtPosition(floorX, floorY);
+    
+    // Debug logging for walkability
+    const debugWalkabilityCheck = () => {
+      console.log('Walkability Check:', {
+        coordinates: { x: floorX, y: floorY },
+        tileType: TileType[tile.type],
+        foundationStatus: foundation ? foundation.status : 'no foundation',
+        isWalkable: this.isCurrentlyWalkable(tile, foundation)
+      });
+    };
+    
+    const walkable = this.isCurrentlyWalkable(tile, foundation);
+    
+    if (!walkable) {
+      debugWalkabilityCheck();
+    }
+    
+    return walkable;
+  }
+  
+  private isCurrentlyWalkable(tile: Tile, foundation: WallFoundation | null): boolean {
+    // Walkable conditions:
+    // 1. Tile is grass or rubble
+    // 2. Wall foundation exists but is not in 'building' or 'complete' state
+    if (tile.type === TileType.GRASS || tile.type === TileType.RUBBLE) {
+      return true;
+    }
+    
+    // If foundation exists and is not in building state, it's walkable
+    if (foundation && foundation.status !== 'building' && foundation.status !== 'complete') {
       return true;
     }
     

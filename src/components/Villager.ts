@@ -612,4 +612,21 @@ export class VillagerManager {
       this.gameMap.isTileWalkable(pos.x, pos.y)
     ) || null;
   }
+
+  public forceVillagerMove(villager: Villager): boolean {
+    // Find the nearest walkable tile
+    const currentX = Math.floor(villager.x);
+    const currentY = Math.floor(villager.y);
+    
+    const alternativeTile = this.gameMap.findAlternativeWalkableTile(currentX, currentY);
+    
+    if (alternativeTile) {
+      // Move to the alternative tile
+      this.moveVillager(villager, alternativeTile.x, alternativeTile.y);
+      return true;
+    }
+    
+    return false;
+}
+
 }
