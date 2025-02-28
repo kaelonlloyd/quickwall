@@ -1,4 +1,6 @@
 import * as PIXI from 'pixi.js';
+import { VillagerStateMachine } from './components/Villager'; // Adjust import path as needed
+
 
 export enum TileType {
   GRASS = 0,
@@ -25,9 +27,14 @@ export interface WallFoundationData {
 }
 
 export interface BuildTask {
-  type: 'wall';
-  foundation: WallFoundationData;
-  buildPosition?: GridPosition; // Position where villager should stand to build
+  type: 'wall' | 'gather' | 'move';
+  foundation?: {
+    x: number;
+    y: number;
+    health: number;
+    maxHealth: number;
+  };
+  buildPosition?: GridPosition;
 }
 
 export interface Tile {
@@ -56,14 +63,13 @@ export interface VillagerTask {
   callback?: () => void;
 }
 
+
 export interface Villager {
   sprite: PIXI.Container;
   selectionRing: PIXI.Graphics;
-  selectionFlag: PIXI.Graphics | null;
-  selectionAnimation: any;
-  healthBar: PIXI.Graphics;
-  health: number;
-  maxHealth: number;
+  selectionFlag?: PIXI.Graphics | null;
+  selectionAnimation?: any;
+  healthBar?: PIXI.Graphics;
   x: number;
   y: number;
   pixelX: number;
@@ -74,7 +80,11 @@ export interface Villager {
   speed: number;
   path: GridPosition[];
   task: VillagerTask | null;
-  currentBuildTask?: BuildTask;
+  currentBuildTask: BuildTask | null;
+  health: number;
+  maxHealth?: number;
+  stateMachine: VillagerStateMachine; // Add this line
+  
 }
 
 export interface GameState {

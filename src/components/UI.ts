@@ -3,6 +3,8 @@ import { BuildingManager } from './Building';
 import { GameMap } from './Map';
 import { VillagerManager } from './Villager';
 import { GridPosition, TileType } from '../types';
+import {IsometricUtils} from '../utils/IsometricUtils';
+import { BuildingState } from './BuildingStateMachine';
 
 export class UIManager {
   private app: PIXI.Application;
@@ -30,15 +32,20 @@ export class UIManager {
   // Shift key handler
   private shiftKeyHandler: () => boolean = () => false;
   
+
+  private isoUtils: IsometricUtils;
+
   constructor(
     app: PIXI.Application, 
     groundLayer: PIXI.Container,
     objectLayer: PIXI.Container,
     gameMap: GameMap, 
     villagerManager: VillagerManager,
-    buildingManager: BuildingManager
+    buildingManager: BuildingManager,
+    isoUtils: IsometricUtils // Direct injection
   ) {
     this.app = app;
+    this.isoUtils = isoUtils;
     this.groundLayer = groundLayer;
     this.objectLayer = objectLayer;
     this.gameMap = gameMap;
@@ -433,7 +440,7 @@ export class UIManager {
 
   private getTileAtScreenPosition(screenX: number, screenY: number): GridPosition {
     const point = new PIXI.Point(screenX, screenY);
-    const tilePos = this.villagerManager.getIsoUtils().toIso(screenX, screenY);
+    const tilePos = this.isoUtils.toIso(screenX, screenY);
     
     console.log('Screen to Tile Conversion:', {
       screenX, 
@@ -509,8 +516,8 @@ private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): 
       if (villager.currentBuildTask) {
         // Find the foundation
         const foundation = this.gameMap.findFoundationAtPosition(
-          villager.currentBuildTask.foundation.x,
-          villager.currentBuildTask.foundation.y
+          villager.currentBuildTask?.foundation?.x ?? -1,
+          villager.currentBuildTask?.foundation?.y ?? -1
         );
         
         if (foundation) {
@@ -530,7 +537,7 @@ private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): 
         }
         
         // Clear the build task
-        villager.currentBuildTask = undefined;
+        villager.currentBuildTask = null;
       }
     });
     
@@ -541,7 +548,7 @@ private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): 
     } else {
       // Check if there's a foundation at this position for build assignment
       const foundation = this.gameMap.findFoundationAtPosition(x, y);
-      if (foundation && foundation.status !== 'complete') {
+      if (foundation && foundation.stateMachine.getCurrentState() == BuildingState.FOUNDATION) {
         // Assign villagers to build the foundation
         this.buildingManager.assignVillagersToFoundation(selectedVillagers, foundation);
         return;

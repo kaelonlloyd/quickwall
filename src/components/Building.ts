@@ -1,9 +1,10 @@
 import { BUILDING_COSTS } from '../constants';
-import { Villager, BuildTask, WallFoundationData, TileType } from '../types';
+import { Villager, BuildTask, GridPosition } from '../types';
 import { GameMap } from './Map';
 import { ResourceManager } from '../utils/ResourceManager';
 import { VillagerManager } from './Villager';
 import { WallFoundation } from './WallManager';
+import { BuildingStateMachine, BuildingState, BuildingEvent, BuildingConfig } from './BuildingStateMachine';
 
 export class BuildingManager {
   private gameMap: GameMap;
@@ -20,19 +21,25 @@ export class BuildingManager {
     this.buildMenu = document.getElementById('build-menu') as HTMLElement;
     
     // Create mode indicator
-    this.modeIndicator = document.createElement('div');
-    this.modeIndicator.id = 'mode-indicator';
-    this.modeIndicator.style.position = 'fixed';
-    this.modeIndicator.style.top = '10px';
-    this.modeIndicator.style.right = '10px';
-    this.modeIndicator.style.backgroundColor = 'rgba(0,0,0,0.5)';
-    this.modeIndicator.style.color = 'white';
-    this.modeIndicator.style.padding = '5px 10px';
-    this.modeIndicator.style.borderRadius = '3px';
-    this.modeIndicator.textContent = 'Mode: Walk';
-    document.body.appendChild(this.modeIndicator);
+    this.modeIndicator = this.createModeIndicator();
     
     this.setupEventListeners();
+  }
+  
+  // Create mode indicator element
+  private createModeIndicator(): HTMLElement {
+    const modeIndicator = document.createElement('div');
+    modeIndicator.id = 'mode-indicator';
+    modeIndicator.style.position = 'fixed';
+    modeIndicator.style.top = '10px';
+    modeIndicator.style.right = '10px';
+    modeIndicator.style.backgroundColor = 'rgba(0,0,0,0.5)';
+    modeIndicator.style.color = 'white';
+    modeIndicator.style.padding = '5px 10px';
+    modeIndicator.style.borderRadius = '3px';
+    modeIndicator.textContent = 'Mode: Walk';
+    document.body.appendChild(modeIndicator);
+    return modeIndicator;
   }
   
   private setupEventListeners(): void {
@@ -110,31 +117,26 @@ export class BuildingManager {
       // Mark the position as occupied
       this.gameMap.wallManager?.occupyBuildPosition(foundation, buildPosition);
       
-      // Convert WallFoundation to WallFoundationData
-      const foundationData: WallFoundationData = {
-        x: foundation.x,
-        y: foundation.y,
-        health: foundation.health,
-        maxHealth: foundation.maxHealth,
-        assignedVillagers: foundation.assignedVillagers,
-        isBuilding: foundation.isBuilding,
-        buildProgress: foundation.buildProgress,
-        status: foundation.status
-      };
-  
-      // Move villager to the specific build position, not directly to the foundation
-      // Use a more precise navigation approach
+      // Move villager to the specific build position
       this.villagerManager.moveVillagerTo(villager, buildPosition.x, buildPosition.y, () => {
         console.log("Villager arrived at build position:", buildPosition);
         
         // Once at the build position, assign build task
         const buildTask: BuildTask = {
           type: 'wall',
-          foundation: foundationData,
+          foundation: {
+            x: foundation.x,
+            y: foundation.y,
+            health: 0,
+            maxHealth: 100
+          },
           buildPosition: buildPosition
         };
         
         villager.currentBuildTask = buildTask;
+        
+        // Trigger build state on the building's state machine
+        foundation.stateMachine.handleEvent(BuildingEvent.PROGRESS_CONSTRUCTION);
         
         // Add villager to foundation's assigned villagers
         foundation.assignedVillagers.push(villager);
@@ -157,13 +159,6 @@ export class BuildingManager {
       return;
     }
     
-    // Additional logging for tile state
-    const tileAtPosition = this.gameMap.getTile(x, y);
-    console.log('Tile at placement:', {
-      tileExists: !!tileAtPosition,
-      tileType: tileAtPosition ? TileType[tileAtPosition.type] : 'N/A'
-    });
-    
     // Place wall foundation
     const foundation = this.gameMap.addWallFoundation(x, y);
     if (!foundation) {
@@ -182,7 +177,6 @@ export class BuildingManager {
       this.setBuildMode(null);
     }
   }
-
   
   public updateFoundationBuilding(delta: number): void {
     this.gameMap.updateFoundationBuilding(delta);

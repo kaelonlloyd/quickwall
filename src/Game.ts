@@ -147,7 +147,8 @@ private async initializeApp(): Promise<void> {
     this.objectLayer,
     this.gameMap, 
     this.villagerManager, 
-    this.buildingManager
+    this.buildingManager,
+    this.isoUtils
   );
   
   // Set up game loop

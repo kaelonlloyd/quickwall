@@ -1,10 +1,15 @@
 import * as PIXI from 'pixi.js';
-import { COLORS, TILE_HEIGHT, TILE_WIDTH, VILLAGER_SPEED, MAP_HEIGHT, MAP_WIDTH } from '../constants';
+import { COLORS, TILE_HEIGHT, TILE_WIDTH, VILLAGER_SPEED } from '../constants';
 import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { GameMap } from './Map';
-import { WallFoundation } from './WallManager';
 import { ImprovedPathFinder } from '../utils/pathfinding';
+import { 
+  VillagerStateMachine, 
+  VillagerState, 
+  VillagerEvent, 
+  VillagerStateContext 
+} from './VillagerStateMachine';
 
 export class VillagerManager {
   private villagers: Villager[];
@@ -18,132 +23,10 @@ export class VillagerManager {
     this.unitLayer = unitLayer;
     this.isoUtils = isoUtils;
     this.selectedVillagers = [];
-    this.gameMap = gameMap; 
+    this.gameMap = gameMap;
     
     // Enable sorting in unit layer for depth-based rendering
     this.unitLayer.sortableChildren = true;
-    
-    // Create selection count text for DOM
-    document.addEventListener('DOMContentLoaded', () => {
-      const textContainer = document.createElement('div');
-      textContainer.style.position = 'absolute';
-      textContainer.style.bottom = '10px';
-      textContainer.style.left = '10px';
-      textContainer.style.color = 'white';
-      textContainer.style.fontSize = '16px';
-      textContainer.style.fontFamily = 'Arial';
-      textContainer.style.textShadow = '1px 1px 1px black';
-      textContainer.style.padding = '5px';
-      textContainer.style.zIndex = '1000';
-      textContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-      textContainer.style.borderRadius = '3px';
-      textContainer.id = 'villager-selection-count';
-      textContainer.textContent = 'Villagers: 0';
-      document.body.appendChild(textContainer);
-    });
-  }
-  
-  public getIsoUtils(): IsometricUtils {
-    return this.isoUtils;
-  }
-  
-  public getSelectedVillagers(): Villager[] {
-    return this.selectedVillagers;
-  }
-  
-  public getSelectedVillager(): Villager | null {
-    return this.selectedVillagers.length > 0 ? this.selectedVillagers[0] : null;
-  }
-  
-  public clearSelection(): void {
-    // Deselect all currently selected villagers
-    this.selectedVillagers.forEach(v => {
-      this.updateVillagerSelectionVisuals(v, false);
-    });
-    this.selectedVillagers = [];
-    this.updateSelectionCountDisplay();
-  }
-  
-  public addToSelection(villager: Villager): void {
-    // Only add if not already selected
-    if (!this.selectedVillagers.includes(villager)) {
-      this.selectedVillagers.push(villager);
-      this.updateVillagerSelectionVisuals(villager, true);
-    }
-    this.updateSelectionCountDisplay();
-  }
-  
-  private updateVillagerSelectionVisuals(villager: Villager, isSelected: boolean): void {
-    // Update selection ring
-    villager.selectionRing.visible = isSelected;
-    
-    // Add a distinctive selection marker (flag on top of the villager)
-    if (!villager.selectionFlag && isSelected) {
-      // Create a flag marker if it doesn't exist
-      const flag = new PIXI.Graphics();
-      flag.beginFill(0xFFFF00); // Yellow flag
-      flag.moveTo(TILE_WIDTH / 2, TILE_HEIGHT / 6 - 15); // Position above head
-      flag.lineTo(TILE_WIDTH / 2 + 10, TILE_HEIGHT / 6 - 10);
-      flag.lineTo(TILE_WIDTH / 2, TILE_HEIGHT / 6 - 5);
-      flag.endFill();
-      
-      // Add flag pole
-      flag.lineStyle(1, 0x000000);
-      flag.moveTo(TILE_WIDTH / 2, TILE_HEIGHT / 6 - 15);
-      flag.lineTo(TILE_WIDTH / 2, TILE_HEIGHT / 6 - 2);
-      
-      villager.sprite.addChild(flag);
-      villager.selectionFlag = flag;
-    } else if (villager.selectionFlag) {
-      // Show/hide the existing flag
-      villager.selectionFlag.visible = isSelected;
-    }
-    
-    // Make the selection ring pulsate for better visibility
-    if (isSelected && villager.selectionRing) {
-      // Stop any existing animation
-      if (villager.selectionAnimation) {
-        clearInterval(villager.selectionAnimation);
-      }
-      
-      // Create pulsating animation
-      let scale = 1.0;
-      let increasing = false;
-      villager.selectionAnimation = setInterval(() => {
-        if (increasing) {
-          scale += 0.03;
-          if (scale >= 1.3) {
-            increasing = false;
-          }
-        } else {
-          scale -= 0.03;
-          if (scale <= 0.8) {
-            increasing = true;
-          }
-        }
-        
-        if (villager.selectionRing) {
-          villager.selectionRing.scale.set(scale);
-        }
-      }, 50);
-    } else if (!isSelected && villager.selectionAnimation) {
-      // Stop animation when not selected
-      clearInterval(villager.selectionAnimation);
-      villager.selectionAnimation = null;
-      
-      // Reset scale
-      if (villager.selectionRing) {
-        villager.selectionRing.scale.set(1.0);
-      }
-    }
-  }
-  
-
-  private updateSelectionCountDisplay(): void {
-    const countElement = document.getElementById('villager-selection-count');
-    if (countElement) {
-      countElement.textContent = `Villagers: ${this.selectedVillagers.length}`;
-    }
   }
   
   public createVillager(x: number, y: number): Villager {
@@ -154,9 +37,7 @@ export class VillagerManager {
     villagerContainer.x = pos.x;
     villagerContainer.y = pos.y;
     
-    // Set zIndex based on y-coordinate for proper depth sorting
-    villagerContainer.zIndex = y;
-    
+    // Body and head graphics
     const villagerSprite = new PIXI.Graphics();
     
     // Body
@@ -169,42 +50,21 @@ export class VillagerManager {
     villagerSprite.drawCircle(TILE_WIDTH / 2, TILE_HEIGHT / 6, 5);
     villagerSprite.endFill();
     
-    // Selection indicator (initially hidden)
+    // Selection ring
     const selectionRing = new PIXI.Graphics();
     selectionRing.lineStyle(2, COLORS.SELECTION_RING);
     selectionRing.drawCircle(TILE_WIDTH / 2, TILE_HEIGHT / 3, 15);
     selectionRing.visible = false;
     
-    // Health bar (background)
-    const healthBarBg = new PIXI.Graphics();
-    healthBarBg.beginFill(0xFF0000);
-    healthBarBg.drawRect(TILE_WIDTH / 4, -10, TILE_WIDTH / 2, 4);
-    healthBarBg.endFill();
-    
-    // Health bar (foreground)
-    const healthBar = new PIXI.Graphics();
-    healthBar.beginFill(0x00FF00);
-    healthBar.drawRect(TILE_WIDTH / 4, -10, TILE_WIDTH / 2, 4);
-    healthBar.endFill();
-    
+    // Add sprites to container
     villagerContainer.addChild(villagerSprite);
     villagerContainer.addChild(selectionRing);
-    villagerContainer.addChild(healthBarBg);
-    villagerContainer.addChild(healthBar);
-    
-    // Make villager interactive
-    villagerContainer.interactive = true;
-    villagerContainer.cursor = 'pointer';
     
     // Create villager object
     const villager: Villager = {
       sprite: villagerContainer,
       selectionRing: selectionRing,
-      selectionFlag: null,
-      selectionAnimation: null,
-      healthBar: healthBar,
-      health: 25,
-      maxHealth: 25,
+      currentBuildTask: null,
       x: x,
       y: y,
       pixelX: pos.x,
@@ -214,96 +74,91 @@ export class VillagerManager {
       moving: false,
       speed: VILLAGER_SPEED,
       path: [],
-      task: null
+      task: null,
+      health: 100,
+      stateMachine: null as any // Will be set immediately after
     };
+    
+    // Create state machine context
+    const stateMachineContext: VillagerStateContext = { villager };
+    
+    // Create and attach state machine
+    villager.stateMachine = new VillagerStateMachine(stateMachineContext, {
+      onStateChange: (from, to) => {
+        console.log(`Villager state changed from ${from} to ${to}`);
+        this.updateVillagerVisuals(villager);
+      }
+    });
+    
+    // Make villager interactive
+    villagerContainer.interactive = true;
+    villagerContainer.cursor = 'pointer';
     
     // Add click event
     villagerContainer.on('pointerdown', (event) => {
-      // Access the native event for checking modifier keys
       const nativeEvent = event.nativeEvent as PointerEvent;
       const isCtrlPressed = nativeEvent.ctrlKey || nativeEvent.metaKey;
       
       this.selectVillager(villager, isCtrlPressed);
       
-      // Stop event propagation to prevent map click
+      // Stop event propagation
       event.stopPropagation();
     });
     
+    // Add to layer and villager list
     this.unitLayer.addChild(villagerContainer);
     this.villagers.push(villager);
-    
-    // Update health bar
-    this.updateHealthBar(villager);
     
     return villager;
   }
   
-  public updateHealthBar(villager: Villager): void {
-    const healthPercent = villager.health / villager.maxHealth;
-    villager.healthBar.clear();
-    villager.healthBar.beginFill(healthPercent > 0.5 ? 0x00FF00 : (healthPercent > 0.25 ? 0xFFFF00 : 0xFF0000));
-    villager.healthBar.drawRect(TILE_WIDTH / 4, -10, (TILE_WIDTH / 2) * healthPercent, 4);
-    villager.healthBar.endFill();
-  }
-
-  public moveVillagerTo(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
-    this.moveVillager(villager, targetX, targetY, callback);
+  private updateVillagerVisuals(villager: Villager): void {
+    // Update visuals based on state machine state
+    switch (villager.stateMachine.getCurrentState()) {
+      case VillagerState.SELECTED:
+        villager.selectionRing.visible = true;
+        break;
+      case VillagerState.BUILDING:
+        // Add a temporary visual indicator
+        villager.sprite.alpha = 0.7;
+        break;
+      case VillagerState.RESTING:
+        // Fade out the villager
+        villager.sprite.alpha = 0.5;
+      default:
+        villager.selectionRing.visible = false;
+        villager.sprite.alpha = 1;
+    }
   }
   
-  public moveVillager(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
-    console.log(`Moving villager to: x=${targetX}, y=${targetY}`);
-    
-    // Validate target coordinates
-    if (targetX === undefined || targetY === undefined || isNaN(targetX) || isNaN(targetY)) {
-      console.error('Invalid target coordinates', { targetX, targetY });
-      return;
+  public selectVillager(villager: Villager, addToSelection: boolean = false): void {
+    // Clear previous selections if not adding to selection
+    if (!addToSelection) {
+      this.selectedVillagers.forEach(v => 
+        v.stateMachine.handleEvent(VillagerEvent.DESELECT)
+      );
+      this.selectedVillagers = [];
     }
     
-    // Ensure target is within map bounds
-    const clampedX = Math.max(0, Math.min(Math.floor(targetX), MAP_WIDTH - 1));
-    const clampedY = Math.max(0, Math.min(Math.floor(targetY), MAP_HEIGHT - 1));
-    
-    // Use the improved path finder
-    const pathFinder = new ImprovedPathFinder(this.gameMap);
-    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY, {
-      maxIterations: 1000,  // Increased max iterations
-      diagonalMovement: true  // Allow diagonal movement
-    });
-    
-    // No path found
-    if (path.length === 0) {
-      console.warn('Unable to find path to target', { targetX, targetY });
-      return;
-    }
-    
-    // Use the final position from the path
-    const finalTarget = path[path.length - 1];
-    
-    // Set target position
-    villager.targetX = finalTarget.x;
-    villager.targetY = finalTarget.y;
-    villager.moving = true;
-    villager.path = path;
-    
-    // Set callback to execute when destination reached
-    if (callback) {
-      villager.task = {
-        type: 'move',
-        target: { x: finalTarget.x, y: finalTarget.y },
-        callback
-      };
+    // Toggle selection for this villager
+    if (!this.selectedVillagers.includes(villager)) {
+      this.selectedVillagers.push(villager);
+      villager.stateMachine.handleEvent(VillagerEvent.SELECT);
     } else {
-      villager.task = {
-        type: 'move',
-        target: { x: finalTarget.x, y: finalTarget.y }
-      };
+      // If already selected and adding to selection, deselect
+      const index = this.selectedVillagers.indexOf(villager);
+      this.selectedVillagers.splice(index, 1);
+      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
     }
+    
+    // Update selection display
+    this.updateSelectionDisplay();
   }
   
   public moveSelectedVillagersToPoint(targetX: number, targetY: number): void {
     if (this.selectedVillagers.length === 0) return;
     
-    // For multiple units, we'll calculate positions around the target point
+    // For multiple units, generate formation positions
     if (this.selectedVillagers.length === 1) {
       // For single unit, just move directly to target
       this.moveVillager(this.selectedVillagers[0], targetX, targetY);
@@ -365,169 +220,116 @@ export class VillagerManager {
     return positions;
   }
   
-  public moveVillagerNear(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
-    // Potential adjacent tiles around the foundation
-    const potentialTiles: GridPosition[] = [
-      { x: targetX - 1, y: targetY },     // Left
-      { x: targetX + 1, y: targetY },     // Right
-      { x: targetX, y: targetY - 1 },     // Top
-      { x: targetX, y: targetY + 1 },     // Bottom
-      { x: targetX - 1, y: targetY - 1 }, // Top-Left
-      { x: targetX + 1, y: targetY - 1 }, // Top-Right
-      { x: targetX - 1, y: targetY + 1 }, // Bottom-Left
-      { x: targetX + 1, y: targetY + 1 }  // Bottom-Right
-    ];
-
-    // Find all walkable tiles
-    const walkableTiles = potentialTiles.filter(tile => 
-      tile.x >= 0 && tile.x < 20 && 
-      tile.y >= 0 && tile.y < 20 && 
-      this.gameMap.isTileWalkable(tile.x, tile.y)
-    );
-
-    // If no walkable tiles, log error and return
-    if (walkableTiles.length === 0) {
-      console.error('No walkable tiles found near foundation', { targetX, targetY });
+  public moveVillager(villager: Villager, targetX: number, targetY: number): void {
+    // Validate target coordinates
+    const clampedX = Math.max(0, Math.min(Math.floor(targetX), 19));
+    const clampedY = Math.max(0, Math.min(Math.floor(targetY), 19));
+    
+    // Use pathfinder to calculate path
+    const pathFinder = new ImprovedPathFinder(this.gameMap);
+    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY);
+    
+    // No path found
+    if (path.length === 0) {
+      villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
       return;
     }
-
-    // Precise distance calculation with multiple tie-breakers
-    const closestTile = walkableTiles.reduce((closest, current) => {
-      // Euclidean distance
-      const closestDist = Math.sqrt(
-        Math.pow(closest.x - targetX, 2) + Math.pow(closest.y - targetY, 2)
-      );
-      const currentDist = Math.sqrt(
-        Math.pow(current.x - targetX, 2) + Math.pow(current.y - targetY, 2)
-      );
-
-      // Compare distances with multiple tie-breakers
-      if (currentDist < closestDist) return current;
-      if (currentDist > closestDist) return closest;
-
-      // If distances are equal, prefer tiles closer to villager's current position
-      const closestVillagerDist = Math.sqrt(
-        Math.pow(closest.x - villager.x, 2) + Math.pow(closest.y - villager.y, 2)
-      );
-      const currentVillagerDist = Math.sqrt(
-        Math.pow(current.x - villager.x, 2) + Math.pow(current.y - villager.y, 2)
-      );
-
-      // If villager distances are equal, prefer bottom-right quadrant
-      if (currentVillagerDist < closestVillagerDist) return current;
-      if (currentVillagerDist > closestVillagerDist) return closest;
-
-      // Final tie-breaker: prefer bottom-right
-      return (current.x > closest.x || current.y > closest.y) ? current : closest;
-    });
-
-    // Move to the closest walkable tile
-    this.moveVillager(villager, closestTile.x, closestTile.y, callback);
+    
+    // Set movement properties
+    villager.targetX = clampedX;
+    villager.targetY = clampedY;
+    villager.path = path;
+    
+    // Trigger state machine events
+    villager.stateMachine.handleEvent(VillagerEvent.START_MOVE);
   }
   
-  
-  private handleVillagerBuildTasks(delta: number): void {
+  public updateVillagers(delta: number): void {
     this.villagers.forEach(villager => {
-      // Check if villager has a current build task
-      if (villager.currentBuildTask && villager.currentBuildTask.type === 'wall') {
-        const foundation = villager.currentBuildTask.foundation;
-        const buildPosition = villager.currentBuildTask.buildPosition;
+      // Update movement
+      if (villager.moving && villager.path.length > 0) {
+        const nextWaypoint = villager.path[0];
         
-        // Find the corresponding wall foundation in the game map
-        const wallFoundations = this.gameMap.getWallFoundations();
-        const matchingFoundation = wallFoundations.find(
-          f => f.x === foundation.x && f.y === foundation.y
-        );
+        // Calculate movement
+        const dx = nextWaypoint.x - villager.x;
+        const dy = nextWaypoint.y - villager.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
         
-        // Check if villager is at their assigned build position - use more lenient distance check
-        if (matchingFoundation && buildPosition) {
-          const dx = Math.abs(villager.x - buildPosition.x);
-          const dy = Math.abs(villager.y - buildPosition.y);
+        // Move towards waypoint
+        if (distance < 0.1) {
+          // Reached waypoint
+          villager.x = nextWaypoint.x;
+          villager.y = nextWaypoint.y;
+          villager.path.shift();
           
-          // Use a more lenient distance threshold (0.8 instead of 0.5)
-          // This will help ensure villagers can start building from any direction
-          if (dx < 0.8 && dy < 0.8) {
-            console.log("Villager at build position, starting to build");
-            matchingFoundation.isBuilding = true;
-          }
-        }
-        
-        // If foundation is completed or removed, clear the build task
-        if (!matchingFoundation || matchingFoundation.status === 'complete') {
-          // Release the build position
-          if (matchingFoundation && buildPosition) {
-            this.gameMap.wallManager?.releaseBuildPosition(matchingFoundation, buildPosition);
-          }
+          // Update sprite position
+          const pos = this.isoUtils.toScreen(villager.x, villager.y);
+          villager.sprite.x = pos.x;
+          villager.sprite.y = pos.y;
           
-          // Clear the build task
-          villager.currentBuildTask = undefined;
+          // Check if path is complete
+          if (villager.path.length === 0) {
+            villager.stateMachine.handleEvent(VillagerEvent.MOVE_COMPLETE);
+          }
+        } else {
+          // Continue moving
+          const speed = villager.speed * delta / 60;
+          const angle = Math.atan2(dy, dx);
+          
+          villager.x += Math.cos(angle) * speed;
+          villager.y += Math.sin(angle) * speed;
+          
+          // Update sprite position
+          const pos = this.isoUtils.toScreen(villager.x, villager.y);
+          villager.sprite.x = pos.x;
+          villager.sprite.y = pos.y;
         }
-      }
-    });
-  }
-  
-  public handleVillagerSelection(villager: Villager, addToSelection: boolean = false): void {
-    // Check if the villager is currently in a build task
-    if (villager.currentBuildTask) {
-      // First, find the foundation they're working on
-      const foundation = this.findBuildTaskFoundation(villager);
-      if (foundation) {
-        // Release their build position
-        this.releaseVillagerFromFoundation(villager, foundation);
       }
       
-      // Clear their build task
-      villager.currentBuildTask = undefined;
-    }
-    
-    // Continue with normal selection logic
-    this.selectVillager(villager, addToSelection);
+      // Check for fatigue
+      if (villager.health < 30) {
+        villager.stateMachine.handleEvent(VillagerEvent.FATIGUE);
+      }
+    });
+  }
+
+  
+  // Assign villagers to build a foundation
+  public assignVillagersToFoundation(villagers: Villager[], foundation: any): void {
+    villagers.forEach(villager => {
+      // Find an available position around the foundation
+      const buildPosition = this.gameMap.wallManager?.findAvailableBuildPosition(foundation);
+      
+      if (!buildPosition) {
+        console.log("No available build positions for villager");
+        return;
+      }
+      
+      // Move villager to build position
+      this.moveVillager(villager, buildPosition.x, buildPosition.y);
+      
+      // Set build task
+      villager.currentBuildTask = {
+        type: 'wall',
+        foundation: foundation,
+        buildPosition: buildPosition
+      };
+      
+      // Trigger build state
+      villager.stateMachine.handleEvent(VillagerEvent.START_BUILD);
+    });
   }
   
-  /**
-   * Find the foundation that a villager is working on
-   */
-  private findBuildTaskFoundation(villager: Villager): WallFoundation | null {
-    if (!villager.currentBuildTask || villager.currentBuildTask.type !== 'wall') {
-      return null;
-    }
-    
-    const taskData = villager.currentBuildTask.foundation;
-    const allFoundations = this.gameMap.getWallFoundations();
-    
-    // Find the matching foundation
-    return allFoundations.find(f => 
-      f.x === taskData.x && 
-      f.y === taskData.y
-    ) || null;
+  // Getter methods
+  public getSelectedVillagers(): Villager[] {
+    return this.selectedVillagers;
   }
   
-  /**
-   * Release a villager from their build position
-   */
-  private releaseVillagerFromFoundation(villager: Villager, foundation: WallFoundation): void {
-    // Remove from assigned villagers array
-    const index = foundation.assignedVillagers.findIndex(v => v === villager);
-    if (index !== -1) {
-      foundation.assignedVillagers.splice(index, 1);
-    }
-    
-    // Release build position if one was assigned
-    if (villager.currentBuildTask?.buildPosition) {
-      this.gameMap.wallManager?.releaseBuildPosition(
-        foundation, 
-        villager.currentBuildTask.buildPosition
-      );
-    }
-    
-    // Clear villager's build task
-    villager.currentBuildTask = undefined;
+  public getAllVillagers(): Villager[] {
+    return this.villagers;
   }
   
-  /**
-   * Enhanced version of forceVillagerMove to move villagers away from wall foundations
-   * Implement in VillagerManager class
-   */
+  // Force move a villager away from a blocked tile
   public forceVillagerMove(villager: Villager): boolean {
     console.log(`Attempting to force move villager from (${villager.x}, ${villager.y})`);
     
@@ -572,235 +374,93 @@ export class VillagerManager {
     return false;
   }
 
-  
-  public getAllVillagers(): Villager[] {
-    return this.villagers;
-  }
-  
-  public isAdjacentToVillager(villager: Villager, x: number, y: number): boolean {
-    return this.isoUtils.isAdjacentToVillager(villager, x, y);
+  public moveVillagerTo(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
+    this.moveVillager(villager, targetX, targetY);
   }
 
-  private isAdjacentToFoundation(villager: Villager, foundation: WallFoundation): boolean {
-    // If the villager has a specific build position, use that instead
-    if (villager.currentBuildTask && 
-        villager.currentBuildTask.buildPosition && 
-        villager.currentBuildTask.foundation.x === foundation.x && 
-        villager.currentBuildTask.foundation.y === foundation.y) {
+  public clearSelection(): void {
+    // Deselect all currently selected villagers
+    this.selectedVillagers.forEach(villager => {
+      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
+    });
+    
+    // Clear the selected villagers array
+    this.selectedVillagers = [];
+    
+    // Update the selection display
+    this.updateSelectionDisplay();
+  }
+  
+  // Update the updateSelectionDisplay method if not already present
+  private updateSelectionDisplay(): void {
+    // Update selection count in UI
+    const selectionElement = document.getElementById('villager-selection-count');
+    if (selectionElement) {
+      selectionElement.textContent = `Villagers: ${this.selectedVillagers.length}`;
+    }
+  }
+
+  public setGameMap(gameMap: GameMap): void {
+    // Set the game map reference
+    this.gameMap = gameMap;
+  }
+  
+
+  public handleVillagerSelection(villager: Villager, addToSelection: boolean = false): void {
+    // Check if the villager is currently in a build task
+    if (villager.currentBuildTask) {
+      // First, find the foundation they're working on
+      const foundation = this.findBuildTaskFoundation(villager);
+      if (foundation) {
+        // Release their build position
+        this.releaseVillagerFromFoundation(villager, foundation);
+      }
       
-      const buildPos = villager.currentBuildTask.buildPosition;
-      const dx = Math.abs(villager.x - buildPos.x);
-      const dy = Math.abs(villager.y - buildPos.y);
-      return dx < 0.5 && dy < 0.5; // At the exact build position
+      // Clear their build task
+      villager.currentBuildTask = null;
     }
     
-    // Otherwise use the standard adjacency check
-    const dx = Math.abs(villager.x - foundation.x);
-    const dy = Math.abs(villager.y - foundation.y);
-    
-    // Check if villager is in an adjacent tile in any direction
-    return (
-      (dx <= 1 && dy <= 1) && // Within adjacent tiles
-      !(dx === 0 && dy === 0) // Not on the same exact tile
-    );
+    // Perform selection
+    this.selectVillager(villager, addToSelection);
   }
-
-  private findClosestFoundationEdge(villager: Villager, foundation: WallFoundation): { x: number, y: number } | null {
-    // Possible adjacent positions relative to foundation
-    const adjacentPositions = [
-      { x: foundation.x - 1, y: foundation.y },     // Left
-      { x: foundation.x + 1, y: foundation.y },     // Right
-      { x: foundation.x, y: foundation.y - 1 },     // Top
-      { x: foundation.x, y: foundation.y + 1 },     // Bottom
-      { x: foundation.x - 1, y: foundation.y - 1 }, // Top-Left
-      { x: foundation.x + 1, y: foundation.y - 1 }, // Top-Right
-      { x: foundation.x - 1, y: foundation.y + 1 }, // Bottom-Left
-      { x: foundation.x + 1, y: foundation.y + 1 }  // Bottom-Right
-    ];
+  
+  // Helper method to find the foundation a villager is working on
+  private findBuildTaskFoundation(villager: Villager): any | null {
+    if (!villager.currentBuildTask || villager.currentBuildTask.type !== 'wall') {
+      return null;
+    }
     
-    // Find the closest adjacent position to the villager
-    return adjacentPositions.find(pos => 
-      Math.abs(villager.x - pos.x) <= 1 && 
-      Math.abs(villager.y - pos.y) <= 1 &&
-      this.gameMap.isTileWalkable(pos.x, pos.y)
+    const taskData = villager.currentBuildTask.foundation;
+    const allFoundations = this.gameMap.getWallFoundations();
+    
+    // Find the matching foundation
+    return allFoundations.find(f => 
+      f.x === taskData?.x && 
+      f.y === taskData?.y
     ) || null;
   }
-
-// Add this method to VillagerManager class to support our initialization order fix
-
-/**
- * Sets the game map reference for the VillagerManager
- * This is needed to break the circular dependency between GameMap and VillagerManager
- */
-public setGameMap(gameMap: GameMap): void {
-  this.gameMap = gameMap;
-}
-
-/**
- * Modify the selectVillager method to use our new handleVillagerSelection method
- */
-public selectVillager(villager: Villager, addToSelection: boolean = false): void {
-  // Replace this with handleVillagerSelection to ensure build tasks are cleared
-  this.handleVillagerSelection(villager, addToSelection);
-}
-
-/**
- * Enhanced version of the updateVillagers method to handle villagers who are stuck on foundations
- */
-public updateVillagers(delta: number): void {
-  // First, update positions for all moving villagers
-  const movedVillagers = new Set<Villager>();
   
-  // Process movement for all villagers first
-  for (const villager of this.villagers) {
-    if (villager.moving && villager.path && villager.path.length > 0) {
-      // Get next waypoint in the path
-      const nextWaypoint = villager.path[0];
-      
-      // Calculate direction to next waypoint
-      const dx = nextWaypoint.x - villager.x;
-      const dy = nextWaypoint.y - villager.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      
-      // If very close to waypoint, move to it exactly
-      if (distance < 0.1) {
-        villager.x = nextWaypoint.x;
-        villager.y = nextWaypoint.y;
-        
-        // Remove this waypoint from path
-        villager.path.shift();
-        
-        // Update sprite position
-        const pos = this.isoUtils.toScreen(villager.x, villager.y);
-        villager.sprite.x = pos.x;
-        villager.sprite.y = pos.y;
-        
-        // Update zIndex for proper depth sorting
-        villager.sprite.zIndex = villager.y;
-        
-        // If path is now empty, we've reached destination
-        if (villager.path.length === 0) {
-          villager.moving = false;
-          
-          // Execute callback if exists
-          if (villager.task && villager.task.callback) {
-            const callback = villager.task.callback;
-            villager.task = null;
-            callback();
-          }
-          
-          movedVillagers.add(villager);
-        }
-      } else {
-        // Move towards waypoint
-        const speed = villager.speed * delta / 60;
-        const moveDistance = Math.min(distance, speed);
-        const angle = Math.atan2(dy, dx);
-        
-        // Calculate new position
-        let newX = villager.x + Math.cos(angle) * moveDistance;
-        let newY = villager.y + Math.sin(angle) * moveDistance;
-        
-        // Validate and update position
-        const nextX = Math.floor(newX);
-        const nextY = Math.floor(newY);
-        
-        // Check if the position is walkable
-        if (this.gameMap.isTileWalkable(nextX, nextY)) {
-          villager.x = newX;
-          villager.y = newY;
-          
-          // Update sprite position
-          const pos = this.isoUtils.toScreen(villager.x, villager.y);
-          villager.sprite.x = pos.x;
-          villager.sprite.y = pos.y;
-          
-          // Update zIndex for proper depth sorting
-          villager.sprite.zIndex = villager.y;
-        } else {
-          // Handle case where path is now blocked
-          console.log(`Path blocked at (${nextX}, ${nextY}), recalculating`);
-          
-          // Temporarily stop movement
-          villager.moving = false;
-          
-          // Try to find a new path
-          if (villager.path.length > 1) {
-            const finalTarget = villager.path[villager.path.length - 1];
-            this.moveVillager(villager, finalTarget.x, finalTarget.y);
-          }
-        }
-      }
-    }
-  }
-  
-  // Handle build tasks for villagers who have reached their destinations
-  this.handleVillagerBuildTasks(delta);
-  
-  // Check for any villagers stuck on wall foundations that shouldn't be there
-  this.checkForVillagersOnWalls();
-}
-
-/**
- * New method to check for villagers that are stuck on wall foundations and move them
- */
-private checkForVillagersOnWalls(): void {
-  if (!this.gameMap) return;
-  
-  const wallFoundations = this.gameMap.getWallFoundations();
-  
-  // Check each foundation
-  wallFoundations.forEach(foundation => {
-    // Only check foundations that are being built or completed
-    if (foundation.status === 'building' || foundation.status === 'complete') {
-      // Find villagers on this foundation
-      const villagersOnTile = this.gameMap.getVillagersOnTile(foundation.x, foundation.y);
-      
-      villagersOnTile.forEach(villager => {
-        // Check if this villager should be here (assigned to build)
-        const isAssigned = foundation.assignedVillagers.includes(villager);
-        
-        if (!isAssigned) {
-          console.log(`Found villager stuck on wall at (${foundation.x}, ${foundation.y}), attempting to move`);
-          this.forceVillagerMove(villager);
-        }
-      });
-    }
-  });
-}
-
-
-private cancelBuildTasks(villager: Villager): void {
-  if (villager.currentBuildTask) {
-    // Find the foundation they're working on
-    const foundation = this.findBuildTaskFoundation(villager);
-    if (foundation) {
-      // Release their build position
-      this.releaseVillagerFromFoundation(villager, foundation);
+  // Helper method to release a villager from their build position
+  private releaseVillagerFromFoundation(villager: Villager, foundation: any): void {
+    // Remove from assigned villagers array
+    const index = foundation.assignedVillagers.findIndex((v: Villager) => v === villager);
+    if (index !== -1) {
+      foundation.assignedVillagers.splice(index, 1);
     }
     
-    // Clear their build task
-    villager.currentBuildTask = undefined;
+    // Release build position if one was assigned
+    if (villager.currentBuildTask?.buildPosition) {
+      this.gameMap.wallManager?.releaseBuildPosition(
+        foundation, 
+        villager.currentBuildTask.buildPosition
+      );
+    }
   }
 }
 
-// Updated methods
-public selectVillager(villager: Villager, addToSelection: boolean = false): void {
-  // First cancel any build tasks
-  this.cancelBuildTasks(villager);
-  
-  // Then do the normal selection logic
-  if (!addToSelection) {
-    this.clearSelection();
-  }
-  this.addToSelection(villager);
-  
-  // Hide build menu
-  const buildMenu = document.getElementById('build-menu');
-  if (buildMenu) {
-    buildMenu.style.display = 'none';
-  }
-}
-
-
-}
+// Exports for use in other files
+export { 
+  VillagerStateMachine, 
+  VillagerState, 
+  VillagerEvent 
+} from './VillagerStateMachine';
