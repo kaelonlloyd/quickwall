@@ -224,8 +224,11 @@ export class GameMap {
   
   public isTileWalkable(x: number, y: number): boolean {
     // More robust boundary and type checking
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
-      console.warn(`Tile outside map boundaries: x=${x}, y=${y}`);
+    const floorX = Math.floor(x);
+    const floorY = Math.floor(y);
+    
+    if (floorX < 0 || floorX >= MAP_WIDTH || floorY < 0 || floorY >= MAP_HEIGHT) {
+      console.warn(`Tile outside map boundaries: x=${floorX}, y=${floorY}`);
       return false;
     }
     
@@ -235,12 +238,45 @@ export class GameMap {
       return false;
     }
     
-    const tile = this.mapData.tiles[Math.floor(y)][Math.floor(x)];
+    const tile = this.mapData.tiles[floorY][floorX];
     
-    // Walkable if tile is grass or rubble
-    return tile.type === TileType.GRASS || tile.type === TileType.RUBBLE;
+    // Check if there's a wall foundation at this location
+    const foundation = this.findFoundationAtPosition(floorX, floorY);
+    
+    // Debug logging for walkability
+    const debugWalkabilityCheck = () => {
+      console.log('Walkability Check:', {
+        coordinates: { x: floorX, y: floorY },
+        tileType: TileType[tile.type],
+        foundationStatus: foundation ? foundation.status : 'no foundation',
+        isWalkable: this.isCurrentlyWalkable(tile, foundation)
+      });
+    };
+    
+    const walkable = this.isCurrentlyWalkable(tile, foundation);
+    
+    if (!walkable) {
+      debugWalkabilityCheck();
+    }
+    
+    return walkable;
   }
   
+  private isCurrentlyWalkable(tile: Tile, foundation: WallFoundation | null): boolean {
+    // Walkable conditions:
+    // 1. Tile is grass or rubble
+    // 2. Wall foundation exists but is not in 'building' or 'complete' state
+    if (tile.type === TileType.GRASS || tile.type === TileType.RUBBLE) {
+      return true;
+    }
+    
+    // If foundation exists and is not in building state, it's walkable
+    if (foundation && foundation.status !== 'building' && foundation.status !== 'complete') {
+      return true;
+    }
+    
+    return false;
+  }
   public addWall(x: number, y: number): boolean {
     // Validate input
     const roundedX = Math.round(x);

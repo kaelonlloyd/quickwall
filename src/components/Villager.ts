@@ -4,7 +4,7 @@ import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { GameMap } from './Map';
 import { WallFoundation } from './WallManager';
-import { PathFinder } from '../utils/pathfinding';
+import { ImprovedPathFinder } from '../utils/pathfinding';
 
 export class VillagerManager {
   private villagers: Villager[];
@@ -278,22 +278,14 @@ export class VillagerManager {
     const clampedX = Math.max(0, Math.min(Math.floor(targetX), MAP_WIDTH - 1));
     const clampedY = Math.max(0, Math.min(Math.floor(targetY), MAP_HEIGHT - 1));
     
-    // Find path to target
-    const pathFinder = new PathFinder(this.gameMap);
-    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY);
+    // Use the improved path finder
+    const pathFinder = new ImprovedPathFinder(this.gameMap);
+    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY, {
+      maxIterations: 1000,  // Increased max iterations
+      diagonalMovement: true  // Allow diagonal movement
+    });
     
-    // If no path found, try to get adjacent walkable tile
-    if (path.length === 0) {
-      const adjacentTile = this.gameMap.getAdjacentWalkableTile(clampedX, clampedY);
-      if (adjacentTile) {
-        const newPath = pathFinder.findPath(villager.x, villager.y, adjacentTile.x, adjacentTile.y);
-        if (newPath.length > 0) {
-          path.push(...newPath);
-        }
-      }
-    }
-    
-    // No path found at all
+    // No path found
     if (path.length === 0) {
       console.warn('Unable to find path to target', { targetX, targetY });
       return;
