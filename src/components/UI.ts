@@ -15,6 +15,8 @@ export class UIManager {
   private buildingManager: BuildingManager;
   private hoveredTile: GridPosition;
   
+  
+  
   // Selection box properties
   private selectionBox: PIXI.Graphics;
   private isSelecting: boolean = false;
@@ -34,7 +36,9 @@ export class UIManager {
   
 
   private isoUtils: IsometricUtils;
-
+  private buildTimeEnabled: boolean = false;
+  private onBuildTimeToggle: (enabled: boolean) => void;
+  
   constructor(
     app: PIXI.Application, 
     groundLayer: PIXI.Container,
@@ -58,6 +62,9 @@ export class UIManager {
     this.selectionBox.zIndex = 1000;
     this.app.stage.addChild(this.selectionBox);
     
+
+    this.setupBuildTimeToggle();
+
     this.setupEventListeners();
   }
   
@@ -566,6 +573,8 @@ private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): 
   }
 }
 
+
+
 // Enhance the selection box handling to use the improved villager selection
 private handleSelectionBox(): void {
   // Get all villagers
@@ -610,5 +619,39 @@ private handleSelectionBox(): void {
     this.villagerManager.handleVillagerSelection(villager, true);
   }
 }
+
+
+private setupBuildTimeToggle(): void {
+  // Create a button to toggle build time display
+  const buildTimeButton = document.createElement('button');
+  buildTimeButton.id = 'toggle-build-time';
+  buildTimeButton.textContent = 'Show Build Times';
+  buildTimeButton.style.position = 'fixed';
+  buildTimeButton.style.top = '80px';
+  buildTimeButton.style.right = '10px';
+  buildTimeButton.style.zIndex = '1000';
+  buildTimeButton.style.padding = '5px 10px';
+  
+  // Add click handler
+  buildTimeButton.addEventListener('click', () => {
+    this.buildTimeEnabled = !this.buildTimeEnabled;
+    buildTimeButton.textContent = this.buildTimeEnabled 
+      ? 'Hide Build Times' 
+      : 'Show Build Times';
+    
+    // Call the callback if it exists
+    if (this.onBuildTimeToggle) {
+      this.onBuildTimeToggle(this.buildTimeEnabled);
+    }
+  });
+  
+  // Add to DOM
+  document.body.appendChild(buildTimeButton);
+}
+
+public setBuildTimeToggleHandler(callback: (enabled: boolean) => void): void {
+  this.onBuildTimeToggle = callback;
+}
+
 
 }

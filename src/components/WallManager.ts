@@ -11,6 +11,7 @@ export interface WallFoundation {
     sprite: PIXI.Graphics;
     progressBar: PIXI.Graphics;
     stateMachine: BuildingStateMachine;
+    buildTimeText?: PIXI.Text; // Add this property to support build time display
     assignedVillagers: Villager[];
     occupiedPositions: { x: number, y: number }[];
     villagersCleared: boolean;
@@ -209,18 +210,25 @@ export class WallManager {
         foundation.isBuilding = true;
         foundation.status = 'building';
         
-        // Progress speed based on number of builders (diminishing returns)
-        const buildSpeed = Math.min(1 + (activeBuilders * 0.5), 3); // Max 3x speed
-        const progressIncrement = delta * 2 * buildSpeed; // Adjust base speed as needed
+        // Get target duration from the building config
+        const buildingConfig = foundation.stateMachine.getConfig();
+        const targetDuration = buildingConfig.targetBuildDuration || 7; // Default to 7 if not set
+        
+        // Apply the formula (3t)/(n/2) to calculate build duration
+        const totalBuildDuration = (3 * targetDuration) / (activeBuilders / 2);
+        
+        // Delta is in frames (usually ~1/60 of a second)
+        // 100% progress over totalBuildDuration seconds
+        const progressPerFrame = (100 / (totalBuildDuration * 60)) * delta;
         
         // Update progress
-        foundation.buildProgress += progressIncrement;
+        foundation.buildProgress += progressPerFrame;
         foundation.progressBar.visible = true;
         foundation.progressBar.scale.x = foundation.buildProgress / 100;
         
         // Update state machine
         foundation.stateMachine.handleEvent(BuildingEvent.PROGRESS_CONSTRUCTION, {
-          progress: progressIncrement
+          progress: progressPerFrame
         });
         
         // Check if construction is complete
@@ -368,4 +376,114 @@ export class WallManager {
     });
     this.wallFoundations = [];
   }
+
+
+/**
+ * Calculate the estimated build time for a foundation based on its config and active builders
+ * @param foundation The wall foundation
+ * @returns Estimated build time in seconds
+ */
+public calculateEstimatedBuildTime(foundation: WallFoundation): number {
+    const activeBuilders = this.countActiveBuilders(foundation);
+    if (activeBuilders === 0) return Infinity; // No builders, infinite time
+    
+    // Get the target duration from the building config
+    const buildingConfig = foundation.stateMachine.getConfig();
+    const targetDuration = buildingConfig.targetBuildDuration || 7; // Default if not set
+    
+    // Apply the formula (3t)/(n/2)
+    const estimatedDuration = (3 * targetDuration) / (activeBuilders / 2);
+    
+    // Calculate remaining time based on current progress
+    const remainingPercentage = 100 - foundation.buildProgress;
+    return (estimatedDuration * remainingPercentage) / 100;
+  }
+  
+  /**
+   * Format build time for display
+   * @param seconds Build time in seconds
+   * @returns Formatted string (e.g., "1m 45s")
+   */
+  public formatBuildTime(seconds: number): string {
+    if (seconds === Infinity) return "∞";
+    if (isNaN(seconds)) return "?";
+    
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.ceil(seconds % 60);
+    
+    if (minutes > 0) {
+      return `${minutes}m ${remainingSeconds}s`;
+    } else {
+      return `${remainingSeconds}s`;
+    }
+  }
+  
+  /**
+   * Create or update a time display for a foundation
+   * @param foundation The wall foundation
+   */
+  public updateBuildTimeDisplay(foundation: WallFoundation): void {
+    // Only show times for foundations that are being built and have assigned villagers
+    if (foundation.status !== 'complete' && foundation.assignedVillagers.length > 0) {
+      const estimatedTime = this.calculateEstimatedBuildTime(foundation);
+      const formattedTime = this.formatBuildTime(estimatedTime);
+      
+      // Create or update text display for build time
+      if (!foundation.buildTimeText) {
+        // Create new text object if it doesn't exist
+        const pos = this.isoUtils.toScreen(foundation.x, foundation.y);
+        
+        // Create text with build time
+        const buildTimeText = new PIXI.Text(formattedTime, {
+          fontFamily: 'Arial',
+          fontSize: 12,
+          fill: 0xFFFFFF,
+          align: 'center'
+        });
+        
+        // Position above the progress bar
+        buildTimeText.x = pos.x + TILE_WIDTH / 2;
+        buildTimeText.y = pos.y - 25;
+        buildTimeText.anchor.set(0.5, 0.5);
+        
+        // Add to object layer
+        this.objectLayer.addChild(buildTimeText);
+        
+        // Store reference in foundation object
+        foundation.buildTimeText = buildTimeText;
+      } else {
+        // Update existing text
+        foundation.buildTimeText.text = formattedTime;
+      }
+      
+      // Show the text
+      foundation.buildTimeText.visible = true;
+    } else if (foundation.buildTimeText) {
+      // Hide the text if foundation is complete or has no builders
+      foundation.buildTimeText.visible = false;
+    }
+  }
+  
+  /**
+   * Update build time displays for all foundations
+   * Called as part of the update loop
+   */
+  public updateAllBuildTimeDisplays(): void {
+    this.wallFoundations.forEach(foundation => {
+      this.updateBuildTimeDisplay(foundation);
+    });
+  }
+  
+  /**
+   * Clean up build time display when removing a foundation
+   * @param foundation The foundation being removed
+   */
+  private cleanupBuildTimeDisplay(foundation: WallFoundation): void {
+    if (foundation.buildTimeText) {
+      this.objectLayer.removeChild(foundation.buildTimeText);
+      foundation.buildTimeText.destroy();
+      foundation.buildTimeText = undefined;
+    }
+  }
+
 }

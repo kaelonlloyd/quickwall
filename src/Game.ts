@@ -25,6 +25,8 @@ export class Game {
   private uiManager!: UIManager;
   public wallManager!: WallManager;
   
+  private showBuildTimes: boolean = false;
+  
   constructor() {
     // Create PixiJS Application
     this.app = new PIXI.Application();
@@ -150,6 +152,11 @@ private async initializeApp(): Promise<void> {
     this.buildingManager,
     this.isoUtils
   );
+
+   // Set up the build time toggle handler
+  this.uiManager.setBuildTimeToggleHandler((enabled) => {
+    this.showBuildTimes = enabled;
+  });
   
   // Set up game loop
   this.app.ticker.add(this.gameLoop.bind(this));
@@ -173,6 +180,12 @@ private async initializeApp(): Promise<void> {
     this.app.canvas.oncontextmenu = () => false;
   }
   
+
+  public toggleBuildTimeDisplay(): void {
+    this.showBuildTimes = !this.showBuildTimes;
+    console.log(`Build time display: ${this.showBuildTimes ? 'ON' : 'OFF'}`);
+  }
+
   private initGame(): void {
     console.log("Game initialization started");
     
@@ -251,16 +264,22 @@ private async initializeApp(): Promise<void> {
     // Update villagers' movement and states
     this.villagerManager.updateVillagers(delta);
     
-    // Update wall foundation building - this now depends on villagers actively building
-    if (this.wallManager) {
+    // Update wall foundation building with improved duration formula
+ if (this.wallManager) {
       this.wallManager.updateFoundationBuilding(delta);
-    }
+      
+      // Update build time displays if enabled
+      if (this.showBuildTimes) {
+        this.wallManager.updateAllBuildTimeDisplays();
+      }
     
     // Update building manager state
     if (this.buildingManager) {
       this.buildingManager.updateFoundationBuilding(delta);
-
-      this.sortContainersForDepth();
+    }
+    
+    // Sort for proper depth
+    this.sortContainersForDepth();
   }
 }
 
@@ -289,6 +308,7 @@ private sortContainersForDepth(): void {
   if (this.unitLayer.sortableChildren) this.unitLayer.sortChildren();
 }
   
+
 
 
   // Update UI event listeners to pass shift key state

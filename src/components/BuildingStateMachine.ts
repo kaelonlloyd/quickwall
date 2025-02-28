@@ -28,7 +28,7 @@ export interface BuildingConfig {
   };
   orientation: 'horizontal' | 'vertical';
   baseHealth: number;
-  buildTime: number;
+  targetBuildDuration: number; // Target build time in seconds (t in the formula)
 }
 
 // Building State Machine Configuration
@@ -78,6 +78,22 @@ export class BuildingStateMachine {
       ]],
       [BuildingState.DESTROYED, []]
     ]);
+  }
+
+  public calculateProgressIncrement(activeBuilders: number, delta: number): number {
+    const t = this.config.targetBuildDuration; // Target duration in seconds
+    const n = Math.max(1, activeBuilders); // Ensure at least 1 builder
+    
+    // Apply the formula (3t)/(n/2) to calculate total build duration
+    const totalBuildDuration = (3 * t) / (n / 2);
+    
+    // Calculate progress per frame (delta is in frames, typically ~1/60 of a second)
+    // 100% progress over totalBuildDuration seconds
+    return (100 / (totalBuildDuration * 60)) * delta;
+  }
+
+  public getConfig(): BuildingConfig {
+    return this.config;
   }
 
   // Validate and perform state transition
@@ -200,16 +216,30 @@ export class BuildingStateMachine {
         size: { width: 1, height: 1 },
         orientation: 'horizontal',
         baseHealth: 100,
-        buildTime: 10
+        targetBuildDuration: 7 // 7 seconds target duration for walls
       },
       'tower': {
         type: 'tower',
         size: { width: 2, height: 2 },
         orientation: 'vertical',
         baseHealth: 200,
-        buildTime: 20
+        targetBuildDuration: 15 // 15 seconds target duration for towers
+      },
+      'house': {
+        type: 'house',
+        size: { width: 2, height: 2 },
+        orientation: 'horizontal',
+        baseHealth: 150,
+        targetBuildDuration: 20 // 20 seconds target duration for houses
+      },
+      'farm': {
+        type: 'farm',
+        size: { width: 3, height: 3 },
+        orientation: 'horizontal',
+        baseHealth: 100,
+        targetBuildDuration: 25 // 25 seconds target duration for farms
       }
-      // Easy to add more building types
+      // Easy to add more building types with different target durations
     };
   }
 }

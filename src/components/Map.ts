@@ -531,10 +531,12 @@ public handleVillagersOnFoundation(foundation: WallFoundation): void {
     villagersOnTile.forEach((villager, index) => {
       // Check if this villager is assigned to build this foundation
       const isAssignedBuilder = villager.currentBuildTask && 
-                                villager.currentBuildTask.type === 'wall' && 
-                                villager.currentBuildTask.foundation.x === foundation.x && 
-                                villager.currentBuildTask.foundation.y === foundation.y;
-      
+                                villager.currentBuildTask?.type === 'wall' && 
+                                villager.currentBuildTask?.foundation?.x === foundation.x && 
+                                villager.currentBuildTask?.foundation?.y === foundation.y;
+                                
+
+                                
       if (!isAssignedBuilder) {
         console.log(`Moving unassigned villager ${index} away from foundation`);
         // Try to move the villager away
