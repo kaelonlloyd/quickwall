@@ -1,9 +1,9 @@
 import * as PIXI from 'pixi.js';
-import { COLORS, TILE_HEIGHT, TILE_WIDTH, VILLAGER_SPEED } from '../constants';
+import { COLORS, TILE_HEIGHT, TILE_WIDTH, VILLAGER_SPEED, MAP_HEIGHT, MAP_WIDTH} from '../constants';
 import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { GameMap } from './Map';
-import { ImprovedPathFinder } from '../utils/pathfinding';
+import { SubTilePathFinder } from '../utils/pathfinding';
 import { 
   VillagerStateMachine, 
   VillagerState, 
@@ -115,71 +115,53 @@ export class VillagerManager {
   
 
   
-  public moveSelectedVillagersToPoint(targetX: number, targetY: number): void {
-    if (this.selectedVillagers.length === 0) return;
-    
-    // For multiple units, generate formation positions
-    if (this.selectedVillagers.length === 1) {
-      // For single unit, just move directly to target
-      this.moveVillagerTo(this.selectedVillagers[0], targetX, targetY);
-      return;
-    }
-    
-    // Generate positions in a circle around the target point
-    const positions = this.generateFormationPositions(targetX, targetY, this.selectedVillagers.length);
-    
-    // Assign each villager a position
-    for (let i = 0; i < this.selectedVillagers.length; i++) {
-      const targetPos = positions[i];
-      if (targetPos && this.gameMap.isTileWalkable(targetPos.x, targetPos.y)) {
+// Update the moveSelectedVillagersToPoint method to handle sub-tile movement
+public moveSelectedVillagersToPoint(targetX: number, targetY: number): void {
+  if (this.selectedVillagers.length === 0) return;
+  
+  // Use precise coordinates for the target point
+  const preciseTargetX = targetX; // Don't floor or round these values
+  const preciseTargetY = targetY;
+  
+  // For multiple units, generate formation positions
+  if (this.selectedVillagers.length === 1) {
+    // For single unit, move directly to target
+    this.moveVillagerTo(this.selectedVillagers[0], preciseTargetX, preciseTargetY);
+    return;
+  }
+  
+  // Generate positions in a circle around the target point
+  const positions = this.generateFormationPositions(preciseTargetX, preciseTargetY, this.selectedVillagers.length);
+  
+  // Assign each villager a position
+  for (let i = 0; i < this.selectedVillagers.length; i++) {
+    const targetPos = positions[i];
+    if (targetPos) {
+      const tileX = Math.floor(targetPos.x);
+      const tileY = Math.floor(targetPos.y);
+      
+      if (this.gameMap.isTileWalkable(tileX, tileY)) {
         this.moveVillagerTo(this.selectedVillagers[i], targetPos.x, targetPos.y);
       } else {
-        // If position is not walkable, find a nearby walkable tile
-        const nearbyPos = this.gameMap.getAdjacentWalkableTile(targetX, targetY);
+        // If position is not walkable, find a nearby walkable position
+        const nearbyPos = this.gameMap.getAdjacentWalkableTile(tileX, tileY);
         if (nearbyPos) {
-          this.moveVillagerTo(this.selectedVillagers[i], nearbyPos.x, nearbyPos.y);
+          // Add some randomness to prevent villagers from stacking
+          const offsetX = 0.3 * (Math.random() - 0.5);
+          const offsetY = 0.3 * (Math.random() - 0.5);
+          this.moveVillagerTo(
+            this.selectedVillagers[i], 
+            nearbyPos.x + 0.5 + offsetX, 
+            nearbyPos.y + 0.5 + offsetY
+          );
         }
       }
     }
   }
+}
+    
   
-  private generateFormationPositions(centerX: number, centerY: number, count: number): GridPosition[] {
-    const positions: GridPosition[] = [];
-    
-    // First position is the center
-    positions.push({ x: centerX, y: centerY });
-    
-    if (count === 1) return positions;
-    
-    // Generate positions in a circular formation
-    const radius = Math.ceil(Math.sqrt(count) / 2);
-    let added = 1;
-    
-    for (let r = 1; r <= radius && added < count; r++) {
-      // Add positions in concentric rings
-      for (let i = -r; i <= r && added < count; i++) {
-        for (let j = -r; j <= r && added < count; j++) {
-          // Only add positions on the perimeter of the ring
-          if (Math.abs(i) === r || Math.abs(j) === r) {
-            const x = centerX + i;
-            const y = centerY + j;
-            
-            // Only add if within map bounds
-            if (x >= 0 && x < 20 && y >= 0 && y < 20) {
-              // Skip the center which was already added
-              if (!(i === 0 && j === 0)) {
-                positions.push({ x, y });
-                added++;
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    return positions;
-  }
-  
+
   
   public updateVillagers(delta: number): void {
     this.villagers.forEach(villager => {
@@ -193,7 +175,7 @@ export class VillagerManager {
         const distance = Math.sqrt(dx * dx + dy * dy);
         
         // Move towards waypoint
-        if (distance < 0.1) {
+        if (distance < 0.01) { // Smaller tolerance for more precise movement
           // Reached waypoint
           villager.x = nextWaypoint.x;
           villager.y = nextWaypoint.y;
@@ -215,12 +197,17 @@ export class VillagerManager {
             }
           }
         } else {
-          // Continue moving
+          // Continue moving with improved smoothness
           const speed = villager.speed * delta / 60;
+          
+          // Use a speed factor based on distance for smoother stopping
+          const speedFactor = 1;//Math.min(1, distance / 0.3);
+          const adjustedSpeed = speed * speedFactor;
+          
           const angle = Math.atan2(dy, dx);
           
-          villager.x += Math.cos(angle) * speed;
-          villager.y += Math.sin(angle) * speed;
+          villager.x += Math.cos(angle) * adjustedSpeed;
+          villager.y += Math.sin(angle) * adjustedSpeed;
           
           // Update sprite position
           const pos = this.isoUtils.toScreen(villager.x, villager.y);
@@ -232,12 +219,12 @@ export class VillagerManager {
         }
       }
       
-      // Update visuals based on state
+      // Existing code for state updates and other logic
       this.updateVillagerVisuals(villager);
       
       // Handle building tasks
       if (villager.stateMachine.getCurrentState() === VillagerState.BUILDING && villager.currentBuildTask) {
-        // Villager is actively building - could add animations or other effects here
+        // Villager is actively building
       }
     });
   }
@@ -324,22 +311,42 @@ export class VillagerManager {
   }
 
   public moveVillagerTo(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
-    // Adjust coordinates to ensure they're valid
-    const clampedX = Math.max(0, Math.min(Math.floor(targetX), 19));
-    const clampedY = Math.max(0, Math.min(Math.floor(targetY), 19));
+    // Use precise coordinates instead of clamping to integer grid positions
+    const clampedX = Math.max(0, Math.min(targetX, MAP_WIDTH - 0.05));
+    const clampedY = Math.max(0, Math.min(targetY, MAP_HEIGHT - 0.05));
     
-    // Use pathfinder to calculate path
-    const pathFinder = new ImprovedPathFinder(this.gameMap);
-    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY);
+    // Use the new sub-tile pathfinder
+    const pathFinder = new SubTilePathFinder(this.gameMap);
+    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY, {
+      diagonalMovement: true,
+      preciseTarget: true
+    });
     
     // If no path found, try finding an alternative target
     if (path.length === 0) {
       console.warn(`No path found to (${clampedX}, ${clampedY}), looking for alternatives`);
-      const alternativeTile = this.gameMap.findAlternativeWalkableTile(clampedX, clampedY, 2);
+      
+      // Try to get close to the target position without forcing integer coordinates
+      const targetTileX = Math.floor(clampedX);
+      const targetTileY = Math.floor(clampedY);
+      
+      // Check if the target tile itself is walkable
+      if (this.gameMap.isTileWalkable(targetTileX, targetTileY)) {
+        // Move to center of the target tile if we couldn't get to the exact position
+        console.log(`Moving to center of tile (${targetTileX + 0.5}, ${targetTileY + 0.5}) instead`);
+        return this.moveVillagerTo(villager, targetTileX + 0.5, targetTileY + 0.5, callback);
+      }
+      
+      // Otherwise find a nearby walkable tile and get as close as possible to the original target
+      const alternativeTile = this.gameMap.findAlternativeWalkableTile(targetTileX, targetTileY, 2);
       
       if (alternativeTile) {
-        console.log(`Found alternative path to (${alternativeTile.x}, ${alternativeTile.y})`);
-        return this.moveVillagerTo(villager, alternativeTile.x, alternativeTile.y, callback);
+        // Use the center of the alternative tile as the new target
+        const centerX = alternativeTile.x + 0.5;
+        const centerY = alternativeTile.y + 0.5;
+        
+        console.log(`Found alternative path to (${centerX}, ${centerY})`);
+        return this.moveVillagerTo(villager, centerX, centerY, callback);
       }
       
       console.error(`Could not find any path to destination`);
@@ -356,7 +363,7 @@ export class VillagerManager {
     
     villager.task = task;
     
-    // Set movement properties
+    // Set movement properties with exact coordinates
     villager.targetX = clampedX;
     villager.targetY = clampedY;
     villager.path = path;
@@ -364,7 +371,55 @@ export class VillagerManager {
     // Trigger state machine events
     villager.stateMachine.handleEvent(VillagerEvent.START_MOVE);
   }
+  
 
+  private generateFormationPositions(centerX: number, centerY: number, count: number): GridPosition[] {
+    const positions: GridPosition[] = [];
+    
+    // First position is the exact center point
+    positions.push({ x: centerX, y: centerY });
+    
+    if (count === 1) return positions;
+    
+    // Generate positions in a circular formation
+    const baseRadius = 0.6; // Base radius in tile units
+    let currentRadius = baseRadius;
+    let unitsPlaced = 1;
+    
+    // Add positions in concentric rings until all units are placed
+    while (unitsPlaced < count) {
+      // Calculate how many units can fit in this ring
+      const circumference = 2 * Math.PI * currentRadius;
+      const unitsInRing = Math.min(
+        count - unitsPlaced,
+        Math.floor(circumference / 0.7) // Ensure units aren't too close
+      );
+      
+      if (unitsInRing <= 0) {
+        // Increase radius if we can't fit any more units
+        currentRadius += 0.5;
+        continue;
+      }
+      
+      // Place units evenly around the circle
+      for (let i = 0; i < unitsInRing; i++) {
+        const angle = (i / unitsInRing) * 2 * Math.PI;
+        const x = centerX + currentRadius * Math.cos(angle);
+        const y = centerY + currentRadius * Math.sin(angle);
+        
+        // Ensure the position is within map bounds
+        if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+          positions.push({ x, y });
+          unitsPlaced++;
+        }
+      }
+      
+      // Increase radius for next ring
+      currentRadius += 0.7;
+    }
+    
+    return positions;
+  }
   
   // Update the updateSelectionDisplay method if not already present
   private updateSelectionDisplay(): void {

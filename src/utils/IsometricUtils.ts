@@ -16,6 +16,7 @@ export class IsometricUtils {
   }
 
   // Convert isometric coordinates to screen coordinates
+  // This method now handles sub-tile precision
   public toScreen(x: number, y: number): Position {
     return {
       x: (x - y) * TILE_WIDTH / 2,
@@ -24,81 +25,139 @@ export class IsometricUtils {
   }
 
   // Convert screen coordinates to isometric grid coordinates
-// Convert screen coordinates to isometric grid coordinates
-public toIso(screenX: number, screenY: number): GridPosition {
-  // Detailed logging for coordinate conversion
-  console.log('Conversion Inputs:', {
-    screenX, 
-    screenY, 
-    worldX: this.worldX, 
-    worldY: this.worldY
-  });
+  // Enhanced with higher precision for sub-tile movement
+  public toIso(screenX: number, screenY: number): GridPosition {
+    // Adjust coordinates relative to world container
+    const adjustedX = screenX - this.worldX;
+    const adjustedY = screenY - this.worldY;
+    
+    // Convert to tile coordinates with precise calculation
+    const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
+    const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
+    
+    // Log detailed conversion information (useful for debugging)
+    console.log('Coordinate Conversion:', {
+      screenX, 
+      screenY, 
+      adjustedX, 
+      adjustedY, 
+      calculatedTileX: tileX, 
+      calculatedTileY: tileY
+    });
+    
+    // Return precise coordinates instead of rounding
+    return {
+      x: tileX,
+      y: tileY
+    };
+  }
 
+  // Helper method to convert precise isometric coordinates to tile coordinates
+  public toTile(x: number, y: number): GridPosition {
+    return {
+      x: Math.floor(x),
+      y: Math.floor(y)
+    };
+  }
+
+  // Check if a position is adjacent to the villager with sub-tile precision
+  public isAdjacentToVillager(villager: Villager, x: number, y: number): boolean {
+    const dx = Math.abs(villager.x - x);
+    const dy = Math.abs(villager.y - y);
+    
+    // Allow for sub-tile proximity check with a radius approach
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    return distance <= 1.2 && distance > 0.1; // Adjacent but not too close
+  }
+
+  // Get adjacent tiles with sub-tile precision options
+  public getAdjacentPoints(x: number, y: number, subTilePrecision: boolean = false): GridPosition[] {
+    if (!subTilePrecision) {
+      // Traditional adjacent tiles (whole tile positions)
+      return [
+        { x: x - 1, y: y },     // Left
+        { x: x + 1, y: y },     // Right
+        { x: x, y: y - 1 },     // Top
+        { x: x, y: y + 1 },     // Bottom
+        { x: x - 1, y: y - 1 }, // Top-Left
+        { x: x + 1, y: y - 1 }, // Top-Right
+        { x: x - 1, y: y + 1 }, // Bottom-Left
+        { x: x + 1, y: y + 1 }  // Bottom-Right
+      ];
+    } else {
+      // Sub-tile precision: more points at smaller intervals
+      const points: GridPosition[] = [];
+      const step = 0.25; // Sub-tile step size
+      
+      // Generate a grid of points around the center position
+      for (let dx = -1; dx <= 1; dx += step) {
+        for (let dy = -1; dy <= 1; dy += step) {
+          // Skip the center point
+          if (dx === 0 && dy === 0) continue;
+          
+          points.push({ x: x + dx, y: y + dy });
+        }
+      }
+      
+      return points;
+    }
+  }
+  
+  // Calculate distance between two points
+  public distance(a: GridPosition, b: GridPosition): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  
+  // Debug method to visualize the conversion process
+  public debugCoordinateConversion(screenX: number, screenY: number): void {
+    console.log('Coordinate Conversion Debug:');
+    console.log('World Container Position:', { x: this.worldX, y: this.worldY });
+    console.log('Screen Coordinates:', { screenX, screenY });
+    
+    const adjustedX = screenX - this.worldX;
+    const adjustedY = screenY - this.worldY;
+    
+    console.log('Adjusted Coordinates:', { adjustedX, adjustedY });
+    
+    const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
+    const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
+    
+    console.log('Calculated Precise Coordinates:', { tileX, tileY });
+    console.log('Rounded Tile Coordinates:', { 
+      x: Math.floor(tileX), 
+      y: Math.floor(tileY) 
+    });
+    
+    console.log('In-Tile Position:', {
+      x: tileX - Math.floor(tileX),
+      y: tileY - Math.floor(tileY)
+    });
+  }
+
+
+  /**
+ * Convert screen coordinates to precise isometric coordinates without rounding
+ * This maintains sub-tile precision for more accurate positioning
+ * @param screenX Screen X coordinate
+ * @param screenY Screen Y coordinate
+ * @returns Precise isometric position
+ */
+public getPrecisePositionFromScreen(screenX: number, screenY: number): GridPosition {
   // Adjust coordinates relative to world container
   const adjustedX = screenX - this.worldX;
   const adjustedY = screenY - this.worldY;
   
-  // Convert to tile coordinates using more precise calculation
+  // Convert to isometric coordinates with precise calculation
   const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
   const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
   
-  // Detailed logging of intermediate calculations
-  console.log('Conversion Calculations:', {
-    adjustedX, 
-    adjustedY, 
-    calculatedTileX: tileX, 
-    calculatedTileY: tileY
-  });
-
-  // Round to nearest whole number
-  const result = {
-    x: Math.round(tileX),
-    y: Math.round(tileY)
+  // Return precise coordinates without rounding
+  return {
+    x: tileX,
+    y: tileY
   };
-
-  console.log('Conversion Result:', result);
-  return result;
 }
 
-// New method to help debug coordinate translation
-public debugCoordinateConversion(screenX: number, screenY: number): void {
-  console.log('Coordinate Conversion Debug:');
-  console.log('World Container Position:', { x: this.worldX, y: this.worldY });
-  console.log('Screen Coordinates:', { screenX, screenY });
-  
-  const adjustedX = screenX - this.worldX;
-  const adjustedY = screenY - this.worldY;
-  
-  console.log('Adjusted Coordinates:', { adjustedX, adjustedY });
-  
-  const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
-  const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
-  
-  console.log('Calculated Tile Coordinates:', { tileX, tileY });
-  console.log('Rounded Tile Coordinates:', { 
-    x: Math.round(tileX), 
-    y: Math.round(tileY) 
-  });
-}
-
-  // Check if a position is adjacent to the villager
-  public isAdjacentToVillager(villager: Villager, x: number, y: number): boolean {
-    const dx = Math.abs(Math.floor(villager.x) - x);
-    const dy = Math.abs(Math.floor(villager.y) - y);
-    return (dx <= 1 && dy <= 1) && !(dx === 0 && dy === 0);
-  }
-
-  // Get adjacent tiles (for pathfinding and building placement)
-  public getAdjacentTiles(x: number, y: number): GridPosition[] {
-    return [
-      { x: x - 1, y: y },     // Left
-      { x: x + 1, y: y },     // Right
-      { x: x, y: y - 1 },     // Top
-      { x: x, y: y + 1 },     // Bottom
-      { x: x - 1, y: y - 1 }, // Top-Left
-      { x: x + 1, y: y - 1 }, // Top-Right
-      { x: x - 1, y: y + 1 }, // Bottom-Left
-      { x: x + 1, y: y + 1 }  // Bottom-Right
-    ];
-  }
 }

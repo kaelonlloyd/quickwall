@@ -1,68 +1,95 @@
 import { GridPosition } from '../types';
 import { GameMap } from '../components/Map';
 
-export class ImprovedPathFinder {
+export class SubTilePathFinder {
   private gameMap: GameMap;
+  private gridDensity: number = 4; // Each tile is divided into a 4x4 grid for more precise movement
 
   constructor(gameMap: GameMap) {
     this.gameMap = gameMap;
   }
 
-  public findPath(startX: number, startY: number, targetX: number, targetY: number, options: { 
-    maxIterations?: number, 
-    diagonalMovement?: boolean 
-  } = {}): GridPosition[] {
+  public findPath(
+    startX: number, 
+    startY: number, 
+    targetX: number, 
+    targetY: number, 
+    options: { 
+      maxIterations?: number, 
+      diagonalMovement?: boolean,
+      preciseTarget?: boolean 
+    } = {}
+  ): GridPosition[] {
     const {
       maxIterations = 500,
-      diagonalMovement = true
+      diagonalMovement = true,
+      preciseTarget = true
     } = options;
 
-    // Sanitize and validate input coordinates
+    // Convert exact coordinates to sub-tile grid positions
     const start: GridPosition = { 
-      x: Math.floor(startX), 
-      y: Math.floor(startY) 
+      x: startX, 
+      y: startY 
     };
+    
     const target: GridPosition = { 
-      x: Math.floor(targetX), 
-      y: Math.floor(targetY) 
+      x: targetX, 
+      y: targetY 
     };
 
     // If start and target are the same, return empty path
-    if (start.x === target.x && start.y === target.y) {
+    if (Math.abs(start.x - target.x) < 0.1 && Math.abs(start.y - target.y) < 0.1) {
       return [];
     }
 
-    // If target is not walkable, find the nearest walkable tile
-    if (!this.gameMap.isTileWalkable(target.x, target.y)) {
-      const nearestWalkable = this.findNearestWalkableTile(start, target);
-      if (nearestWalkable) {
-        target.x = nearestWalkable.x;
-        target.y = nearestWalkable.y;
+    
+    // Check if target is in the same tile as start
+    const startTileX = Math.floor(start.x);
+    const startTileY = Math.floor(start.y);
+    const targetTileX = Math.floor(target.x);
+    const targetTileY = Math.floor(target.y);
+
+    // If target tile is not walkable, find the nearest walkable position
+    if (!this.gameMap.isTileWalkable(targetTileX, targetTileY)) {
+      const nearestPosition = this.findNearestAccessiblePoint(start, target);
+      if (nearestPosition) {
+        console.log(`Target tile (${targetTileX}, ${targetTileY}) is not walkable, routing to (${nearestPosition.x}, ${nearestPosition.y}) instead`);
+        return this.findPath(startX, startY, nearestPosition.x, nearestPosition.y, options);
       } else {
-        console.warn('No walkable path found');
+        console.warn('No accessible point found near target');
         return [];
       }
     }
 
     // Priority queue for open set
-    const openSet: PathNode[] = [this.createNode(start, null, 0, this.heuristic(start, target))];
+    const openSet: PathNode[] = [
+      this.createNode(start, null, 0, this.heuristic(start, target))
+    ];
+    
     const closedSet = new Set<string>();
     const nodeMap = new Map<string, PathNode>();
 
-    while (openSet.length > 0 && nodeMap.size < maxIterations) {
+    let iterations = 0;
+    while (openSet.length > 0 && iterations < maxIterations) {
+      iterations++;
+      
       // Get the node with the lowest f-score
       const currentNode = this.popLowestFScore(openSet);
       
-      // Check if we've reached the target
-      if (this.isNodeTarget(currentNode, target)) {
+      // Check if we've reached the target (within a small tolerance)
+      const reachedTarget = preciseTarget 
+        ? this.isCloseEnough(currentNode.position, target, 0.01)
+        : this.isOnSameTile(currentNode.position, target);
+        
+      if (reachedTarget) {
         return this.reconstructPath(currentNode);
       }
 
       // Mark as closed
       closedSet.add(this.nodeKey(currentNode.position));
 
-      // Get walkable neighbors
-      const neighbors = this.getWalkableNeighbors(currentNode.position, diagonalMovement);
+      // Get neighbors
+      const neighbors = this.getSubTileNeighbors(currentNode.position, diagonalMovement);
 
       for (const neighborPos of neighbors) {
         const neighborKey = this.nodeKey(neighborPos);
@@ -70,7 +97,10 @@ export class ImprovedPathFinder {
         // Skip if already in closed set
         if (closedSet.has(neighborKey)) continue;
 
-        // Calculate movement cost (diagonal movement slightly more expensive)
+        // Check if this position is walkable in the sub-tile grid
+        if (!this.isSubTileWalkable(neighborPos)) continue;
+
+        // Calculate movement cost
         const movementCost = this.calculateMovementCost(currentNode.position, neighborPos);
         const newGScore = currentNode.gScore + movementCost;
 
@@ -94,84 +124,198 @@ export class ImprovedPathFinder {
       }
     }
 
-    console.warn('Path finding reached max iterations', { start, target });
+    console.warn('Path finding reached max iterations or no path found', { start, target });
+    
+    // If we failed to find a path to the exact target, try to get as close as possible
+    if (preciseTarget && iterations >= maxIterations) {
+      console.log('Trying approximate path instead...');
+      return this.findPath(startX, startY, targetX, targetY, { 
+        ...options, 
+        preciseTarget: false 
+      });
+    }
+    
     return [];
   }
 
-  private findNearestWalkableTile(start: GridPosition, target: GridPosition): GridPosition | null {
-    // Spiral search for the nearest walkable tile
-    const maxRadius = 10; // Limit search radius
-    for (let radius = 1; radius <= maxRadius; radius++) {
-      const candidates: GridPosition[] = [];
+  // Find the nearest accessible point to the target
+  public findNearestAccessiblePoint(start: GridPosition, target: GridPosition): GridPosition | null {
+    // Get the tile we're trying to reach
+    const targetTileX = Math.floor(target.x);
+    const targetTileY = Math.floor(target.y);
+    
+    // Calculate the relative position within the tile (0-1 range)
+    const inTileX = target.x - targetTileX; // e.g., 0.7 means 70% across the tile
+    const inTileY = target.y - targetTileY;
+    
+    // First get all walkable tiles adjacent to the target tile
+    const adjacentTiles: GridPosition[] = [
+      { x: targetTileX - 1, y: targetTileY },
+      { x: targetTileX + 1, y: targetTileY },
+      { x: targetTileX, y: targetTileY - 1 },
+      { x: targetTileX, y: targetTileY + 1 },
+      { x: targetTileX - 1, y: targetTileY - 1 },
+      { x: targetTileX - 1, y: targetTileY + 1 },
+      { x: targetTileX + 1, y: targetTileY - 1 },
+      { x: targetTileX + 1, y: targetTileY + 1 }
+    ].filter(tile => this.gameMap.isTileWalkable(tile.x, tile.y));
+    
+    if (adjacentTiles.length === 0) {
+      // If no adjacent tiles are walkable, try a wider search
+      return this.gameMap.findAlternativeWalkableTile(targetTileX, targetTileY, 3);
+    }
+    
+    // Sort adjacent tiles by proximity to the specific part of the target tile
+    // This helps get as close as possible to the exact point the user clicked
+    adjacentTiles.sort((a, b) => {
+      // For each adjacent tile, calculate the position nearest to the target
+      const posA = this.getNearestPointOnTileBorder(a, targetTileX, targetTileY, inTileX, inTileY);
+      const posB = this.getNearestPointOnTileBorder(b, targetTileX, targetTileY, inTileX, inTileY);
       
-      // Check tiles in a spiral pattern around the target
-      for (let dx = -radius; dx <= radius; dx++) {
-        for (let dy = -radius; dy <= radius; dy++) {
-          if (Math.abs(dx) === radius || Math.abs(dy) === radius) {
-            const checkX = target.x + dx;
-            const checkY = target.y + dy;
-            
-            // Validate map boundaries
-            if (checkX >= 0 && checkX < 20 && checkY >= 0 && checkY < 20) {
-              if (this.gameMap.isTileWalkable(checkX, checkY)) {
-                candidates.push({ x: checkX, y: checkY });
-              }
-            }
-          }
-        }
-      }
+      // Calculate distances from start and to target
+      const distAToTarget = this.euclideanDistance(posA, target);
+      const distBToTarget = this.euclideanDistance(posB, target);
       
-      // If candidates found, return the closest one
-      if (candidates.length > 0) {
-        return candidates.reduce((closest, current) => {
-          const closestDist = this.manhattanDistance(start, closest);
-          const currentDist = this.manhattanDistance(start, current);
-          return currentDist < closestDist ? current : closest;
+      // Prioritize getting close to the target
+      return distAToTarget - distBToTarget;
+    });
+    
+    // Get the best tile and calculate the optimal position within it
+    const bestTile = adjacentTiles[0];
+    return this.getNearestPointOnTileBorder(bestTile, targetTileX, targetTileY, inTileX, inTileY);
+  }
+  
+  // Calculate the best position on a tile's border that's closest to the target point
+  public getNearestPointOnTileBorder(
+    tile: GridPosition, 
+    targetTileX: number, 
+    targetTileY: number,
+    inTileX: number,
+    inTileY: number
+  ): GridPosition {
+    // Determine which border this tile shares with the target tile
+    const sharedBorderX = tile.x === targetTileX - 1 ? 1 : (tile.x === targetTileX + 1 ? 0 : inTileX);
+    const sharedBorderY = tile.y === targetTileY - 1 ? 1 : (tile.y === targetTileY + 1 ? 0 : inTileY);
+    
+    // Calculate the position, clamping to tile boundaries
+    let posX = tile.x + sharedBorderX;
+    let posY = tile.y + sharedBorderY;
+    
+    // Ensure we're within the walkable tile's bounds
+    posX = Math.max(tile.x, Math.min(tile.x + 0.95, posX));
+    posY = Math.max(tile.y, Math.min(tile.y + 0.95, posY));
+    
+    return { x: posX, y: posY };
+  }
+
+  private getSubTileNeighbors(pos: GridPosition, allowDiagonal: boolean): GridPosition[] {
+    const neighbors: GridPosition[] = [];
+    const step = 0.25; // Step size for sub-tile grid (can be adjusted for finer movement)
+    
+    // Straight directions (cardinal)
+    const cardinalDirections = [
+      { x: step, y: 0 },   // Right
+      { x: -step, y: 0 },  // Left
+      { x: 0, y: step },   // Down
+      { x: 0, y: -step }   // Up
+    ];
+    
+    // Add cardinal neighbors
+    for (const dir of cardinalDirections) {
+      neighbors.push({
+        x: pos.x + dir.x,
+        y: pos.y + dir.y
+      });
+    }
+    
+    // Add diagonal neighbors if allowed
+    if (allowDiagonal) {
+      const diagonalDirections = [
+        { x: step, y: step },     // Down-Right
+        { x: step, y: -step },    // Up-Right
+        { x: -step, y: step },    // Down-Left
+        { x: -step, y: -step }    // Up-Left
+      ];
+      
+      for (const dir of diagonalDirections) {
+        neighbors.push({
+          x: pos.x + dir.x,
+          y: pos.y + dir.y
         });
       }
     }
     
-    return null;
+    return neighbors;
   }
 
-  private getWalkableNeighbors(position: GridPosition, allowDiagonal: boolean): GridPosition[] {
-    const neighbors: GridPosition[] = [];
-    const directions = allowDiagonal 
-      ? [
-          { x: -1, y: 0 }, { x: 1, y: 0 },   // Left, Right
-          { x: 0, y: -1 }, { x: 0, y: 1 },   // Up, Down
-          { x: -1, y: -1 }, { x: 1, y: -1 },   // Top-Left, Top-Right
-          { x: -1, y: 1 }, { x: 1, y: 1 }    // Bottom-Left, Bottom-Right
-        ]
-      : [
-          { x: -1, y: 0 }, { x: 1, y: 0 },   // Left, Right
-          { x: 0, y: -1 }, { x: 0, y: 1 }    // Up, Down
-        ];
-
-    for (const dir of directions) {
-      const newX = position.x + dir.x;
-      const newY = position.y + dir.y;
-
-      // Check walkability and map boundaries
-      if (newX >= 0 && newX < 20 && newY >= 0 && newY < 20 && 
-          this.gameMap.isTileWalkable(newX, newY)) {
-        
-        // Optional: Diagonal movement blocking
-        if (allowDiagonal) {
-          // Prevent diagonal movement through corners that would require walking through blocked tiles
-          if (dir.x !== 0 && dir.y !== 0) {
-            if (!this.gameMap.isTileWalkable(position.x + dir.x, position.y) || 
-                !this.gameMap.isTileWalkable(position.x, position.y + dir.y)) {
-              continue;
-            }
-          }
-        }
-
-        neighbors.push({ x: newX, y: newY });
+  // Check if a sub-tile position is walkable
+  private isSubTileWalkable(position: GridPosition): boolean {
+    // Get the tile this sub-position is in
+    const tileX = Math.floor(position.x);
+    const tileY = Math.floor(position.y);
+    
+    // First check if the main tile is walkable
+    if (!this.gameMap.isTileWalkable(tileX, tileY)) {
+      return false;
+    }
+    
+    // Check if we're too close to an unwalkable tile
+    // (creates a small buffer zone around unwalkable tiles)
+    const buffer = 0.1; // Buffer distance from unwalkable tiles
+    
+    // Only check nearby tiles if we're close to an edge
+    const inTileX = position.x - tileX;
+    const inTileY = position.y - tileY;
+    
+    // Check tiles in each direction if we're close to an edge
+    if (inTileX < buffer) {
+      // Check left tile
+      if (!this.gameMap.isTileWalkable(tileX - 1, tileY)) {
+        return false;
+      }
+    } else if (inTileX > 1 - buffer) {
+      // Check right tile
+      if (!this.gameMap.isTileWalkable(tileX + 1, tileY)) {
+        return false;
       }
     }
-
-    return neighbors;
+    
+    if (inTileY < buffer) {
+      // Check top tile
+      if (!this.gameMap.isTileWalkable(tileX, tileY - 1)) {
+        return false;
+      }
+    } else if (inTileY > 1 - buffer) {
+      // Check bottom tile
+      if (!this.gameMap.isTileWalkable(tileX, tileY + 1)) {
+        return false;
+      }
+    }
+    
+    // If we're close to both edges, check the diagonal tile too
+    if (inTileX < buffer && inTileY < buffer) {
+      // Check top-left diagonal
+      if (!this.gameMap.isTileWalkable(tileX - 1, tileY - 1)) {
+        return false;
+      }
+    } else if (inTileX > 1 - buffer && inTileY < buffer) {
+      // Check top-right diagonal
+      if (!this.gameMap.isTileWalkable(tileX + 1, tileY - 1)) {
+        return false;
+      }
+    } else if (inTileX < buffer && inTileY > 1 - buffer) {
+      // Check bottom-left diagonal
+      if (!this.gameMap.isTileWalkable(tileX - 1, tileY + 1)) {
+        return false;
+      }
+    } else if (inTileX > 1 - buffer && inTileY > 1 - buffer) {
+      // Check bottom-right diagonal
+      if (!this.gameMap.isTileWalkable(tileX + 1, tileY + 1)) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 
   private createNode(
@@ -190,30 +334,34 @@ export class ImprovedPathFinder {
   }
 
   private heuristic(a: GridPosition, b: GridPosition): number {
-    // Manhattan distance with diagonal preference
+    // Octile distance with sub-tile precision
     const dx = Math.abs(a.x - b.x);
     const dy = Math.abs(a.y - b.y);
-    const diagonalCost = Math.min(dx, dy);
-    const straightCost = Math.abs(dx - dy);
-    
-    return diagonalCost * 1.414 + straightCost;
+    return (dx + dy) + (Math.sqrt(2) - 2) * Math.min(dx, dy);
   }
 
-  private manhattanDistance(a: GridPosition, b: GridPosition): number {
-    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  private euclideanDistance(a: GridPosition, b: GridPosition): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   private calculateMovementCost(from: GridPosition, to: GridPosition): number {
-    // Slightly more expensive for diagonal movement
-    return from.x !== to.x && from.y !== to.y ? 1.414 : 1;
+    // Calculate actual distance for more realistic movement costs
+    return this.euclideanDistance(from, to);
   }
 
-  private isNodeTarget(node: PathNode, target: GridPosition): boolean {
-    return node.position.x === target.x && node.position.y === target.y;
+  private isCloseEnough(a: GridPosition, b: GridPosition, tolerance: number = 0.15): boolean {
+    return this.euclideanDistance(a, b) <= tolerance;
+  }
+  
+  private isOnSameTile(a: GridPosition, b: GridPosition): boolean {
+    return Math.floor(a.x) === Math.floor(b.x) && Math.floor(a.y) === Math.floor(b.y);
   }
 
-  private nodeKey(node: GridPosition): string {
-    return `${node.x},${node.y}`;
+  private nodeKey(pos: GridPosition): string {
+    // Higher precision for sub-tile positions
+    return `${pos.x.toFixed(3)},${pos.y.toFixed(3)}`;
   }
 
   private popLowestFScore(openSet: PathNode[]): PathNode {
@@ -240,7 +388,33 @@ export class ImprovedPathFinder {
       current = current.parent;
     }
     
-    return path;
+    // Smooth the path to make movement more natural
+    return this.smoothPath(path);
+  }
+  
+  // Simple path smoothing to remove unnecessary zigzags
+  private smoothPath(path: GridPosition[]): GridPosition[] {
+    if (path.length <= 2) return path;
+    
+    const smoothed: GridPosition[] = [path[0]];
+    
+    for (let i = 1; i < path.length - 1; i++) {
+      const prev = path[i - 1];
+      const current = path[i];
+      const next = path[i + 1];
+      
+      // Skip points that create unnecessary zigzags
+      const isZigzag = 
+        (Math.abs(prev.x - next.x) < 0.01 && Math.abs(current.x - prev.x) > 0.01) ||
+        (Math.abs(prev.y - next.y) < 0.01 && Math.abs(current.y - prev.y) > 0.01);
+      
+      if (!isZigzag) {
+        smoothed.push(current);
+      }
+    }
+    
+    smoothed.push(path[path.length - 1]);
+    return smoothed;
   }
 }
 
@@ -248,7 +422,7 @@ export class ImprovedPathFinder {
 interface PathNode {
   position: GridPosition;
   parent: PathNode | null;
-  gScore: number;  // Cost from start
-  hScore: number;  // Estimated cost to goal (heuristic)
-  fScore: number;  // Total estimated cost
+  gScore: number;
+  hScore: number;
+  fScore: number;
 }

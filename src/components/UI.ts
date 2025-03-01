@@ -5,6 +5,7 @@ import { VillagerManager } from './Villager';
 import { GridPosition, TileType } from '../types';
 import {IsometricUtils} from '../utils/IsometricUtils';
 import { BuildingState } from './BuildingStateMachine';
+import {SubTilePathFinder} from '../utils/pathfinding';
 
 export class UIManager {
   private app: PIXI.Application;
@@ -37,8 +38,8 @@ export class UIManager {
 
   private isoUtils: IsometricUtils;
   private buildTimeEnabled: boolean = false;
-  private onBuildTimeToggle: (enabled: boolean) => void;
-  
+  private onBuildTimeToggle!: (enabled: boolean) => void;
+
   constructor(
     app: PIXI.Application, 
     groundLayer: PIXI.Container,
@@ -444,20 +445,6 @@ export class UIManager {
   
 
 
-
-  private getTileAtScreenPosition(screenX: number, screenY: number): GridPosition {
-    const point = new PIXI.Point(screenX, screenY);
-    const tilePos = this.isoUtils.toIso(screenX, screenY);
-    
-    console.log('Screen to Tile Conversion:', {
-      screenX, 
-      screenY, 
-      convertedTile: tilePos
-    });
-    
-    return tilePos;
-  }
-
   
   private findVillagerAtPosition(x: number, y: number): any | null {
     const allVillagers = this.villagerManager.getAllVillagers();
@@ -481,17 +468,21 @@ export class UIManager {
   // Add the following improvements to the UIManager class
 
 // Modify the handleLeftClick method in UIManager to use the enhanced villager selection logic
-private handleLeftClick(x: number, y: number, isCtrlPressed: boolean = false): void {
-  console.log(`Left click - Reported coordinates: x=${x}, y=${y}`);
-  console.log(`Tile details:`, {
-    mapTile: this.gameMap.getTile(x, y),
-    mapTileType: this.gameMap.getTile(x, y)?.type ? TileType[this.gameMap.getTile(x, y)!.type] : 'undefined'
-  });
+private handleLeftClick(x: number, y: number, isCtrlPressed: boolean = false, screenX?: number, screenY?: number): void {
+  console.log(`Left click - Coordinates: x=${x}, y=${y}`);
   
-  // Validate coordinates
-  if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) {
-    console.error('Invalid grid coordinates', { x, y });
-    return;
+  // Get the precise sub-tile position within the tile
+  let preciseX = x, preciseY = y;
+  
+  // If we have screen coordinates, use them for more precision
+  if (screenX !== undefined && screenY !== undefined) {
+    const precisePos = this.isoUtils.getPrecisePositionFromScreen(screenX, screenY);
+    preciseX = precisePos.x;
+    preciseY = precisePos.y;
+  } else {
+    // Otherwise add a small random offset to avoid stacking
+    preciseX = x + (Math.random() * 0.1);
+    preciseY = y + (Math.random() * 0.1);
   }
   
   // Check if we're in build mode
@@ -501,18 +492,26 @@ private handleLeftClick(x: number, y: number, isCtrlPressed: boolean = false): v
     return;
   }
   
-  // Check if there's a villager at this position
+  // Check if there's a villager at this position (use the same tile-based check for selecting)
   const clickedVillager = this.findVillagerAtPosition(x, y);
   
   if (clickedVillager) {
-    // Just use selectVillager, not handleVillagerSelection
     this.villagerManager.selectVillager(clickedVillager, isCtrlPressed);
+  } else {
+    // If no villager, deselect all (unless Ctrl is pressed)
+    if (!isCtrlPressed) {
+      this.villagerManager.clearSelection();
+    }
   }
 }
 
-// Enhance the handleRightClick method to cancel build tasks before moving
+// Modify the handleRightClick method to pass precise coordinates
 private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): void {
-  console.log(`Right click at grid coordinates: x=${x}, y=${y}`);
+  console.log(`Right click - Coordinates: x=${x}, y=${y}, Screen: (${mouseX}, ${mouseY})`);
+  
+  // Get the precise sub-tile position
+  // Convert the screen coordinates to an exact isometric position
+  const preciseIsoPosition = this.isoUtils.getPrecisePositionFromScreen(mouseX, mouseY);
   
   const selectedVillagers = this.villagerManager.getSelectedVillagers();
   
@@ -549,30 +548,49 @@ private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): 
     });
     
     // Check if the tile is walkable
-    if (this.gameMap.isTileWalkable(x, y)) {
-      // Move all selected villagers as a group
-      this.villagerManager.moveSelectedVillagersToPoint(x, y);
+    const tileX = Math.floor(preciseIsoPosition.x);
+    const tileY = Math.floor(preciseIsoPosition.y);
+    
+    if (this.gameMap.isTileWalkable(tileX, tileY)) {
+      // Move all selected villagers as a group to the precise position
+      this.villagerManager.moveSelectedVillagersToPoint(
+        preciseIsoPosition.x, 
+        preciseIsoPosition.y
+      );
     } else {
       // Check if there's a foundation at this position for build assignment
-      const foundation = this.gameMap.findFoundationAtPosition(x, y);
+      const foundation = this.gameMap.findFoundationAtPosition(tileX, tileY);
       if (foundation && foundation.stateMachine.getCurrentState() == BuildingState.FOUNDATION) {
         // Assign villagers to build the foundation
         this.buildingManager.assignVillagersToFoundation(selectedVillagers, foundation);
         return;
       }
       
-      // If not a foundation or not walkable, try to find a nearby walkable tile
-      const nearbyPos = this.gameMap.getAdjacentWalkableTile(x, y);
-      if (nearbyPos) {
-        this.villagerManager.moveSelectedVillagersToPoint(nearbyPos.x, nearbyPos.y);
+      // If not a foundation or not walkable, try to find the closest walkable position
+      console.log(`Target tile (${tileX}, ${tileY}) is not walkable, looking for nearby position`);
+      
+      // Try to find a position as close as possible to where the user clicked
+      const pathFinder = new SubTilePathFinder(this.gameMap);
+      const closestPoint = pathFinder.findNearestAccessiblePoint(
+        { x: selectedVillagers[0].x, y: selectedVillagers[0].y },
+        preciseIsoPosition
+      );
+      
+      if (closestPoint) {
+        this.villagerManager.moveSelectedVillagersToPoint(closestPoint.x, closestPoint.y);
+      } else {
+        // If still can't find a path, try the traditional approach
+        const nearbyPos = this.gameMap.getAdjacentWalkableTile(tileX, tileY);
+        if (nearbyPos) {
+          this.villagerManager.moveSelectedVillagersToPoint(nearbyPos.x + 0.5, nearbyPos.y + 0.5);
+        }
       }
     }
   } else {
-    // If no villagers selected, open build menu as before
+    // If no villagers selected, open build menu
     this.buildingManager.showBuildMenu(mouseX, mouseY);
   }
 }
-
 
 
 // Enhance the selection box handling to use the improved villager selection
@@ -618,6 +636,17 @@ private handleSelectionBox(): void {
     // Use handleVillagerSelection instead of addToSelection
     this.villagerManager.handleVillagerSelection(villager, true);
   }
+}
+
+
+private getTileAtScreenPosition(screenX: number, screenY: number): GridPosition {
+  const precisePos = this.isoUtils.getPrecisePositionFromScreen(screenX, screenY);
+  
+  // For tile-based operations, return the integer tile coordinates
+  return {
+    x: Math.floor(precisePos.x),
+    y: Math.floor(precisePos.y)
+  };
 }
 
 
