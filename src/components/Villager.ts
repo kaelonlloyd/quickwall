@@ -36,7 +36,8 @@ export class VillagerManager {
     const villagerContainer = new PIXI.Container();
     villagerContainer.x = pos.x;
     villagerContainer.y = pos.y;
-    
+    villagerContainer.pivot.set(TILE_WIDTH / 2, TILE_HEIGHT / 3);
+
     // Body and head graphics
     const villagerSprite = new PIXI.Graphics();
     
@@ -179,6 +180,7 @@ public updateVillagers(delta: number): void {
       console.log(`Next waypoint: (${nextWaypoint.x}, ${nextWaypoint.y})`);
       console.log(`Distance to waypoint: ${distance}`);
       
+
       // Move towards waypoint
       if (distance < 0.01) { // Smaller tolerance for more precise movement
         // Precisely set to the waypoint
@@ -188,21 +190,13 @@ public updateVillagers(delta: number): void {
         
         // Update sprite position precisely
         const pos = this.isoUtils.toScreen(villager.x, villager.y);
+        console.log(`Logical position: (${villager.x}, ${villager.y}), Screen position: (${pos.x}, ${pos.y})`);
         villager.sprite.x = pos.x;
         villager.sprite.y = pos.y;
         
         // Check if path is complete
         if (villager.path.length === 0) {
           // Ensure final position matches exactly
-          if (villager.task && villager.task.target) {
-            villager.x = villager.task.target.x;
-            villager.y = villager.task.target.y;
-            
-            const finalPos = this.isoUtils.toScreen(villager.x, villager.y);
-            villager.sprite.x = finalPos.x;
-            villager.sprite.y = finalPos.y;
-          }
-          
           villager.moving = false;
           villager.stateMachine.handleEvent(VillagerEvent.MOVE_COMPLETE);
           
