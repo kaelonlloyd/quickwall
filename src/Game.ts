@@ -503,6 +503,37 @@ private updateDebugStatus(): void {
         isShiftDown = false;
       }
     });
+
+
+    this.app.canvas.addEventListener('click', (e) => {
+      const mouseX = e.clientX;
+      const mouseY = e.clientY;
+      
+      // Convert to precise isometric coordinates
+      const isoPos = this.isoUtils.getPrecisePositionFromScreen(mouseX, mouseY);
+      
+      // Visualize the click point
+      const clickGraphics = new PIXI.Graphics();
+      clickGraphics.lineStyle(2, 0xFF0000, 1);
+      clickGraphics.beginFill(0xFF0000, 0.7);
+      
+      const screenPos = this.isoUtils.toScreen(isoPos.x, isoPos.y);
+      clickGraphics.drawCircle(screenPos.x, screenPos.y, 5);
+      clickGraphics.endFill();
+      
+      // Add to object layer with high z-index
+      clickGraphics.zIndex = 1000;
+      this.objectLayer.addChild(clickGraphics);
+      
+      // Optional: Remove the dot after a few seconds
+      setTimeout(() => {
+        this.objectLayer.removeChild(clickGraphics);
+        clickGraphics.destroy();
+      }, 3000);
+      
+      console.log(`Click at precise iso coords: (${isoPos.x.toFixed(2)}, ${isoPos.y.toFixed(2)})`);
+    });
+  
     
     // Modify tile click handling in UI to pass shift key state
     this.uiManager.setShiftKeyHandler(() => isShiftDown);

@@ -163,72 +163,87 @@ public moveSelectedVillagersToPoint(targetX: number, targetY: number): void {
   
 
   
-  public updateVillagers(delta: number): void {
-    this.villagers.forEach(villager => {
-      // Update movement
-      if (villager.moving && villager.path.length > 0) {
-        const nextWaypoint = villager.path[0];
+public updateVillagers(delta: number): void {
+  this.villagers.forEach(villager => {
+    // Update movement
+    if (villager.moving && villager.path.length > 0) {
+      const nextWaypoint = villager.path[0];
+      
+      // Calculate precise movement
+      const dx = nextWaypoint.x - villager.x;
+      const dy = nextWaypoint.y - villager.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      // Debugging log
+      console.log(`Villager position: (${villager.x}, ${villager.y})`);
+      console.log(`Next waypoint: (${nextWaypoint.x}, ${nextWaypoint.y})`);
+      console.log(`Distance to waypoint: ${distance}`);
+      
+      // Move towards waypoint
+      if (distance < 0.01) { // Smaller tolerance for more precise movement
+        // Precisely set to the waypoint
+        villager.x = nextWaypoint.x;
+        villager.y = nextWaypoint.y;
+        villager.path.shift();
         
-        // Calculate movement
-        const dx = nextWaypoint.x - villager.x;
-        const dy = nextWaypoint.y - villager.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
+        // Update sprite position precisely
+        const pos = this.isoUtils.toScreen(villager.x, villager.y);
+        villager.sprite.x = pos.x;
+        villager.sprite.y = pos.y;
         
-        // Move towards waypoint
-        if (distance < 0.01) { // Smaller tolerance for more precise movement
-          // Reached waypoint
-          villager.x = nextWaypoint.x;
-          villager.y = nextWaypoint.y;
-          villager.path.shift();
-          
-          // Update sprite position
-          const pos = this.isoUtils.toScreen(villager.x, villager.y);
-          villager.sprite.x = pos.x;
-          villager.sprite.y = pos.y;
-          
-          // Check if path is complete
-          if (villager.path.length === 0) {
-            villager.stateMachine.handleEvent(VillagerEvent.MOVE_COMPLETE);
+        // Check if path is complete
+        if (villager.path.length === 0) {
+          // Ensure final position matches exactly
+          if (villager.task && villager.task.target) {
+            villager.x = villager.task.target.x;
+            villager.y = villager.task.target.y;
             
-            // Execute callback if exists
-            if (villager.task && villager.task.type === 'move' && villager.task.callback) {
-              villager.task.callback();
-              villager.task = null; // Clear the task after execution
-            }
+            const finalPos = this.isoUtils.toScreen(villager.x, villager.y);
+            villager.sprite.x = finalPos.x;
+            villager.sprite.y = finalPos.y;
           }
-        } else {
-          // Continue moving with improved smoothness
-          const speed = villager.speed * delta / 60;
           
-          // Use a speed factor based on distance for smoother stopping
-          const speedFactor = 1;//Math.min(1, distance / 0.3);
-          const adjustedSpeed = speed * speedFactor;
+          villager.moving = false;
+          villager.stateMachine.handleEvent(VillagerEvent.MOVE_COMPLETE);
           
-          const angle = Math.atan2(dy, dx);
-          
-          villager.x += Math.cos(angle) * adjustedSpeed;
-          villager.y += Math.sin(angle) * adjustedSpeed;
-          
-          // Update sprite position
-          const pos = this.isoUtils.toScreen(villager.x, villager.y);
-          villager.sprite.x = pos.x;
-          villager.sprite.y = pos.y;
-          
-          // Update zIndex based on y-coordinate for proper depth sorting
-          villager.sprite.zIndex = villager.y * 10;
+          // Execute callback if exists
+          if (villager.task && villager.task.type === 'move' && villager.task.callback) {
+            villager.task.callback();
+            villager.task = null; // Clear the task after execution
+          }
         }
+      } else {
+        // Continue moving with improved smoothness
+        const speed = villager.speed * delta / 60;
+        
+        // Calculate precise movement vector
+        const angle = Math.atan2(dy, dx);
+        const moveX = Math.cos(angle) * speed;
+        const moveY = Math.sin(angle) * speed;
+        
+        // Update precise grid position
+        villager.x += moveX;
+        villager.y += moveY;
+        
+        // Precise screen position calculation
+        const pos = this.isoUtils.toScreen(villager.x, villager.y);
+        villager.sprite.x = pos.x;
+        villager.sprite.y = pos.y;
+        
+        // Update zIndex based on y-coordinate for proper depth sorting
+        villager.sprite.zIndex = Math.floor(villager.y * 10);
       }
-      
-      // Existing code for state updates and other logic
-      this.updateVillagerVisuals(villager);
-      
-      // Handle building tasks
-      if (villager.stateMachine.getCurrentState() === VillagerState.BUILDING && villager.currentBuildTask) {
-        // Villager is actively building
-      }
-    });
-  }
-
+    }
+    
+    // Update villager visuals
+    this.updateVillagerVisuals(villager);
+    
+    // Handle building tasks
+    if (villager.stateMachine.getCurrentState() === VillagerState.BUILDING && villager.currentBuildTask) {
+      // Potential future handling of building tasks
+    }
+  });
+}
   
   // Assign villagers to build a foundation
   public assignVillagersToFoundation(villagers: Villager[], foundation: any): void {
