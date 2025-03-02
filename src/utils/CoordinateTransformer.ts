@@ -11,7 +11,8 @@ export enum RenderingMode {
 }
 
 /**
- * A unified coordinate transformer that can switch between different rendering modes
+ * Provides coordinate transformation between grid coordinates and screen coordinates
+ * Supports both isometric and orthogonal projections
  */
 export class CoordinateTransformer {
   private worldX: number;
@@ -48,7 +49,8 @@ export class CoordinateTransformer {
   }
 
   /**
-   * Convert grid coordinates to screen coordinates based on current rendering mode
+   * Convert grid coordinates to screen coordinates
+   * Uses the current rendering mode
    */
   public toScreen(x: number, y: number): Position {
     if (this.renderingMode === RenderingMode.ISOMETRIC) {
@@ -59,7 +61,8 @@ export class CoordinateTransformer {
   }
 
   /**
-   * Convert screen coordinates to grid coordinates based on current rendering mode
+   * Convert screen coordinates to grid coordinates
+   * Uses the current rendering mode
    */
   public toGrid(screenX: number, screenY: number): GridPosition {
     if (this.renderingMode === RenderingMode.ISOMETRIC) {
@@ -71,6 +74,7 @@ export class CoordinateTransformer {
 
   /**
    * Get precise position from screen coordinates
+   * Uses the current rendering mode
    */
   public getPrecisePositionFromScreen(screenX: number, screenY: number): GridPosition {
     if (this.renderingMode === RenderingMode.ISOMETRIC) {
@@ -78,16 +82,6 @@ export class CoordinateTransformer {
     } else {
       return this.toOrthogonalGrid(screenX, screenY);
     }
-  }
-
-  /**
-   * Helper to convert to tile coordinates
-   */
-  public toTile(x: number, y: number): GridPosition {
-    return {
-      x: Math.floor(x),
-      y: Math.floor(y)
-    };
   }
 
   /**
@@ -99,12 +93,33 @@ export class CoordinateTransformer {
     return Math.sqrt(dx * dx + dy * dy);
   }
 
+  /**
+   * Convert grid coordinates to tile coordinates (floored integers)
+   */
+  public toTile(x: number, y: number): GridPosition {
+    return {
+      x: Math.floor(x),
+      y: Math.floor(y)
+    };
+  }
+
+  /**
+   * Get the world container position
+   */
+  public getWorldPosition(): Position {
+    return {
+      x: this.worldX,
+      y: this.worldY
+    };
+  }
+
   // Private implementation methods
 
   /**
    * Convert grid coordinates to isometric screen coordinates
    */
   private toIsometricScreen(x: number, y: number): Position {
+    // Formula for isometric projection
     return {
       x: (x - y) * TILE_WIDTH / 2,
       y: (x + y) * TILE_HEIGHT / 2
@@ -119,7 +134,7 @@ export class CoordinateTransformer {
     const adjustedX = screenX - this.worldX;
     const adjustedY = screenY - this.worldY;
     
-    // Convert to tile coordinates with precise calculation
+    // Formula for isometric to grid conversion
     const tileX = (adjustedX / (TILE_WIDTH / 2) + adjustedY / (TILE_HEIGHT / 2)) / 2;
     const tileY = (adjustedY / (TILE_HEIGHT / 2) - adjustedX / (TILE_WIDTH / 2)) / 2;
     
@@ -133,6 +148,7 @@ export class CoordinateTransformer {
    * Convert grid coordinates to orthogonal screen coordinates
    */
   private toOrthogonalScreen(x: number, y: number): Position {
+    // Direct mapping for orthogonal projection
     return {
       x: x * TILE_WIDTH,
       y: y * TILE_HEIGHT
@@ -147,13 +163,10 @@ export class CoordinateTransformer {
     const adjustedX = screenX - this.worldX;
     const adjustedY = screenY - this.worldY;
     
-    // Convert to grid coordinates
-    const gridX = adjustedX / TILE_WIDTH;
-    const gridY = adjustedY / TILE_HEIGHT;
-    
+    // Direct mapping for orthogonal to grid conversion
     return {
-      x: gridX,
-      y: gridY
+      x: adjustedX / TILE_WIDTH,
+      y: adjustedY / TILE_HEIGHT
     };
   }
 }
