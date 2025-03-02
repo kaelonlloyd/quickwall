@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js';
-import { COLORS, MAP_HEIGHT, MAP_WIDTH } from './constants';
+import { COLORS, MAP_HEIGHT, MAP_WIDTH, TILE_HEIGHT, TILE_WIDTH } from './constants';
 import { Resources } from './types';
 import { IsometricUtils } from './utils/IsometricUtils';
 import { ResourceManager } from './utils/ResourceManager';
@@ -9,6 +9,9 @@ import { BuildingManager } from './components/Building';
 import { UIManager } from './components/UI';
 import { WallManager } from './components/WallManager';
 import { PathVisualizer } from './utils/PathVisualizer';
+import { CoordinateTransformer, RenderingMode } from './utils/CoordinateTransformer';
+import { RenderingToggle } from './components/RenderingToggle';
+
 
 export class Game {
   private app!: PIXI.Application;
@@ -29,6 +32,11 @@ export class Game {
   private showBuildTimes: boolean = false;
   private showSubTileGrid: boolean = false;
   private hoveredTile: { x: number, y: number } = { x: -1, y: -1 };
+  private showCollisionDetection: boolean = false;
+  private collisionGraphics: PIXI.Graphics | null = null;
+
+  private transformer!: CoordinateTransformer;
+  private renderingToggle!: RenderingToggle;
 
   private pathVisualizer!: PathVisualizer;
   
@@ -57,6 +65,7 @@ export class Game {
       throw new Error("Failed to initialize PIXI renderer");
     }
     
+
     // Add the canvas to the DOM and set its style
     const canvas = this.app.canvas as HTMLCanvasElement;
     canvas.style.display = 'block';
@@ -88,6 +97,21 @@ export class Game {
     // Center the world container
     this.worldContainer.x = this.app.screen.width / 2;
     this.worldContainer.y = this.app.screen.height / 4;
+
+
+    this.transformer = new CoordinateTransformer(
+      this.worldContainer.x, 
+      this.worldContainer.y,
+      RenderingMode.ISOMETRIC
+    );
+
+    this.renderingToggle = new RenderingToggle(
+      this.transformer,
+      this.handleRenderingModeChange.bind(this)
+    );
+    this.renderingToggle.addShortcutToInstructions();
+
+    
     
     // Initialize utilities and managers
     this.isoUtils = new IsometricUtils(this.worldContainer.x, this.worldContainer.y);
@@ -116,14 +140,15 @@ export class Game {
     this.gameMap = new GameMap(
       this.groundLayer,
       this.objectLayer,
-      this.isoUtils
+      this.isoUtils,
+      this.transformer
     );
     
     // Set the wall manager in the game map
     this.gameMap.setWallManager(this.wallManager);
     
     // Create the villager manager with the game map
-    this.villagerManager = new VillagerManager(this.unitLayer, this.isoUtils, this.gameMap);
+    this.villagerManager = new VillagerManager(this.unitLayer, this.isoUtils, this.gameMap, this.pathVisualizer );
     
     // Make sure the GameMap knows about the VillagerManager
     this.gameMap.setVillagerManager(this.villagerManager);
@@ -166,6 +191,7 @@ export class Game {
     this.addDebugOptionsDisplay();
 
 
+    this.addCollisionVisualizationToggle();
   
     this.setupMouseTracking();
     // Update sub-tile grid visualization if enabled and we have a hovered tile
@@ -208,8 +234,6 @@ export class Game {
     const villagers = this.villagerManager.getAllVillagers();
     
     villagers.forEach(villager => {
-
-      console.log(villager.path);
 
       if (villager.path.length > 0) {
         // Create a full path from current position to the end
@@ -404,21 +428,7 @@ export class Game {
     console.log("Game initialization completed");
   }
 
-  private onResize(): void {
-    if (this.app.renderer) {
-      this.app.renderer.resize(window.innerWidth, window.innerHeight);
-      this.worldContainer.x = this.app.screen.width / 2;
-      this.worldContainer.y = this.app.screen.height / 4;
-      this.isoUtils.updateWorldPosition(this.worldContainer.x, this.worldContainer.y);
-      
-      // Update selection count display position
-      const selectionCountElement = document.getElementById('villager-selection-count');
-      if (selectionCountElement) {
-        selectionCountElement.style.bottom = '10px';
-        selectionCountElement.style.left = '10px';
-      }
-    }
-  }
+
 
 
   private gameLoop(ticker: PIXI.Ticker): void {
@@ -428,6 +438,11 @@ export class Game {
     // Update villagers' movement and states
     this.villagerManager.updateVillagers(delta);
     
+
+    if (this.showCollisionDetection) {
+      this.visualizeCollisions();
+    }
+
     // Update wall foundation building with improved duration formula
  if (this.wallManager) {
       this.wallManager.updateFoundationBuilding(delta);
@@ -538,4 +553,186 @@ private updateDebugStatus(): void {
     // Modify tile click handling in UI to pass shift key state
     this.uiManager.setShiftKeyHandler(() => isShiftDown);
   }
+
+  private addCollisionVisualizationToggle(): void {
+    const collisionToggle = document.createElement('div');
+    collisionToggle.innerHTML = `
+      <label style="display: flex; align-items: center; margin-bottom: 8px;">
+        <input type="checkbox" id="toggle-collision-viz" style="margin-right: 8px;"> 
+        Show Collision Detection
+      </label>
+    `;
+    
+    // Find the debug panel and add this toggle
+    const debugPanel = document.getElementById('debug-panel');
+    if (debugPanel) {
+      debugPanel.appendChild(collisionToggle);
+    } else {
+      // Create the panel if it doesn't exist
+      const panel = document.createElement('div');
+      panel.id = 'debug-panel';
+      panel.style.position = 'fixed';
+      panel.style.top = '160px';
+      panel.style.right = '10px';
+      panel.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+      panel.style.color = 'white';
+      panel.style.padding = '10px';
+      panel.style.borderRadius = '5px';
+      panel.style.zIndex = '1000';
+      
+      panel.appendChild(collisionToggle);
+      document.body.appendChild(panel);
+    }
+    
+    // Set up the collision visualization toggle
+    const checkbox = document.getElementById('toggle-collision-viz') as HTMLInputElement;
+    if (checkbox) {
+      checkbox.checked = false; // Default off
+      
+      checkbox.addEventListener('change', () => {
+        this.showCollisionDetection = checkbox.checked;
+        
+        // Update the game map's visualization mode
+        if (this.gameMap) {
+          this.gameMap.setCollisionVisualization(this.showCollisionDetection);
+        }
+      });
+    }
+  }
+
+
+
+// Add this method to handle rendering mode changes
+private handleRenderingModeChange(newMode: RenderingMode): void {
+  console.log(`Rendering mode changed to ${newMode}`);
+  
+  // Rebuild the entire map with the new rendering mode
+  this.rebuildMap();
+  
+  // Update villager positions
+  this.updateAllEntityPositions();
+}
+
+/**
+ * Rebuild the map when rendering mode changes
+ */
+private rebuildMap(): void {
+  // Clear existing layers
+  this.groundLayer.removeChildren();
+  this.objectLayer.removeChildren();
+  
+  // Rebuild the map
+  if (this.gameMap) {
+    // Record existing wall foundations
+    const existingFoundations = this.gameMap.getWallFoundations();
+    
+    // Clear all wall foundations from the wall manager
+    if (this.wallManager) {
+      this.wallManager.cleanupAllFoundations();
+    }
+    
+    // Redraw the map
+    this.gameMap.redrawMap();
+    
+    // Restore wall foundations
+    existingFoundations.forEach(foundation => {
+      this.gameMap.addWallFoundation(foundation.x, foundation.y);
+    });
+  }
+}
+
+/**
+ * Update positions of all entities to match the new rendering mode
+ */
+private updateAllEntityPositions(): void {
+  // Update villager positions
+  if (this.villagerManager) {
+    const villagers = this.villagerManager.getAllVillagers();
+    
+    villagers.forEach(villager => {
+      // Update sprite position based on grid coordinates
+      const pos = this.transformer.toScreen(villager.x, villager.y);
+      villager.sprite.x = pos.x;
+      villager.sprite.y = pos.y;
+    });
+  }
+}
+
+// Update onResize method
+private onResize(): void {
+  if (this.app.renderer) {
+    this.app.renderer.resize(window.innerWidth, window.innerHeight);
+    this.worldContainer.x = this.app.screen.width / 2;
+    this.worldContainer.y = this.app.screen.height / 4;
+    
+    // Update transformer with new world position
+    this.transformer.updateWorldPosition(this.worldContainer.x, this.worldContainer.y);
+    
+    // Update positions of all entities
+    this.updateAllEntityPositions();
+  }
+}
+
+  private visualizeCollisions(): void {
+    // Only update periodically to save performance
+    if (Math.random() > 0.05) return; // ~3 times per second
+    
+    if (!this.collisionGraphics) {
+      this.collisionGraphics = new PIXI.Graphics();
+      this.collisionGraphics.zIndex = 500; // Below villagers but above ground
+      this.worldContainer.addChild(this.collisionGraphics);
+    }
+    
+    this.collisionGraphics.clear();
+    
+    // Visualize only around the player characters to save performance
+    const villagers = this.villagerManager.getAllVillagers();
+    if (villagers.length === 0) return;
+    
+    // Calculate the bounding box containing all villagers plus padding
+    const padding = 5; // Visualize tiles in this radius around villagers
+    let minX = MAP_WIDTH;
+    let minY = MAP_HEIGHT;
+    let maxX = 0;
+    let maxY = 0;
+    
+    villagers.forEach(v => {
+      minX = Math.min(minX, Math.floor(v.x) - padding);
+      minY = Math.min(minY, Math.floor(v.y) - padding);
+      maxX = Math.max(maxX, Math.floor(v.x) + padding);
+      maxY = Math.max(maxY, Math.floor(v.y) + padding);
+    });
+    
+    // Clamp to map bounds
+    minX = Math.max(0, minX);
+    minY = Math.max(0, minY);
+    maxX = Math.min(MAP_WIDTH - 1, maxX);
+    maxY = Math.min(MAP_HEIGHT - 1, maxY);
+    
+    // Draw visualization for each tile in the area
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const isWalkable = this.gameMap.isTileWalkable(x, y);
+        
+        if (!isWalkable) {
+          // Visualize unwalkable tile
+          const pos = this.isoUtils.toScreen(x, y);
+          
+          // Draw a red overlay on unwalkable tiles
+          this.collisionGraphics.beginFill(0xFF0000, 0.3);
+          this.collisionGraphics.moveTo(pos.x, pos.y + TILE_HEIGHT / 2);
+          this.collisionGraphics.lineTo(pos.x + TILE_WIDTH / 2, pos.y);
+          this.collisionGraphics.lineTo(pos.x + TILE_WIDTH, pos.y + TILE_HEIGHT / 2);
+          this.collisionGraphics.lineTo(pos.x + TILE_WIDTH / 2, pos.y + TILE_HEIGHT);
+          this.collisionGraphics.lineTo(pos.x, pos.y + TILE_HEIGHT / 2);
+          this.collisionGraphics.endFill();
+        }
+      }
+    }
+
+    
+  }
+
+  
+  
 }

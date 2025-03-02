@@ -48,7 +48,7 @@ export class PathVisualizer {
   }
   
   // Add explicit logging to track visualization calls
-  public visualizePath(path: GridPosition[], color: number = 0xFF0000): void {
+ public visualizePath(path: GridPosition[], color: number = 0xFF0000): void {
     console.log(`Visualizing path with ${path.length} points, debug enabled: ${this.debugEnabled}`);
     
     if (!this.debugEnabled || path.length === 0) return;

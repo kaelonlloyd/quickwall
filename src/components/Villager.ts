@@ -4,6 +4,7 @@ import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { GameMap } from './Map';
 import { SubTilePathFinder } from '../utils/pathfinding';
+import { CollisionDetector } from '../utils/CollisionDetector';
 import { 
   VillagerStateMachine, 
   VillagerState, 
@@ -11,20 +12,34 @@ import {
   VillagerStateContext 
 } from './VillagerStateMachine';
 
+import { DynamicPathfinder } from '../utils/DynamicPathfinder';
+import { PathVisualizer } from '../utils/PathVisualizer';
+
+
+
 export class VillagerManager {
+  // Add this property to the VillagerManager class
+  private dynamicPathfinder: DynamicPathfinder;
+
+  private collisionDetector: CollisionDetector | null = null;
+  private pathRecalculationEnabled: boolean = true;
+  private pathRecalculationTimer: number = 0;
+  private readonly PATH_RECALCULATION_INTERVAL: number = 20; // Check every 20 frames
+
+
   private villagers: Villager[];
   private unitLayer: PIXI.Container;
   private isoUtils: IsometricUtils;
   private selectedVillagers: Villager[];
   private gameMap: GameMap;
   
-  constructor(unitLayer: PIXI.Container, isoUtils: IsometricUtils, gameMap: GameMap) {
+  constructor(unitLayer: PIXI.Container, isoUtils: IsometricUtils, gameMap: GameMap, pathVisualizer?: PathVisualizer) {
     this.villagers = [];
     this.unitLayer = unitLayer;
     this.isoUtils = isoUtils;
     this.selectedVillagers = [];
     this.gameMap = gameMap;
-    
+    this.dynamicPathfinder = new DynamicPathfinder(gameMap, pathVisualizer);
     // Enable sorting in unit layer for depth-based rendering
     this.unitLayer.sortableChildren = true;
   }
@@ -113,7 +128,33 @@ export class VillagerManager {
     return villager;
   }
   
+  public setDynamicPathfinder(pathfinder: DynamicPathfinder): void {
+    this.dynamicPathfinder = pathfinder;
+    console.log("Dynamic pathfinder set in VillagerManager");
+  }
   
+  /**
+   * Set the collision detector instance
+   */
+  public setCollisionDetector(detector: CollisionDetector): void {
+    this.collisionDetector = detector;
+    console.log("Collision detector set in VillagerManager");
+  }
+  
+  /**
+   * Enable or disable dynamic path recalculation
+   */
+  public setPathRecalculationEnabled(enabled: boolean): void {
+    this.pathRecalculationEnabled = enabled;
+    console.log(`Path recalculation ${enabled ? 'enabled' : 'disabled'}`);
+  }
+  
+  /**
+   * Check if path recalculation is enabled
+   */
+  public isPathRecalculationEnabled(): boolean {
+    return this.pathRecalculationEnabled;
+  }
 
   
 // Update the moveSelectedVillagersToPoint method to handle sub-tile movement
@@ -121,42 +162,45 @@ public moveSelectedVillagersToPoint(targetX: number, targetY: number): void {
   if (this.selectedVillagers.length === 0) return;
   
   // Use precise coordinates for the target point
-  const preciseTargetX = targetX; // Don't floor or round these values
+  const preciseTargetX = targetX;
   const preciseTargetY = targetY;
   
   // For multiple units, generate formation positions
   if (this.selectedVillagers.length === 1) {
-    // For single unit, move directly to target
-    this.moveVillagerTo(this.selectedVillagers[0], preciseTargetX, preciseTargetY);
+    // For single unit, directly check if the target is walkable
+    const targetTileX = Math.floor(preciseTargetX);
+    const targetTileY = Math.floor(preciseTargetY);
+    
+    if (this.gameMap.isTileWalkable(targetTileX, targetTileY)) {
+      // Target is walkable, move directly to it
+      this.moveVillagerTo(this.selectedVillagers[0], preciseTargetX, preciseTargetY);
+    } else {
+      // Target is not walkable, find nearest walkable position
+      const nearestPoint = this.dynamicPathfinder.findPath(
+        this.selectedVillagers[0], 
+        preciseTargetX, 
+        preciseTargetY
+      );
+      
+      if (nearestPoint.length > 0) {
+        // Path found to a walkable position near target
+        this.moveVillagerTo(this.selectedVillagers[0], preciseTargetX, preciseTargetY);
+      } else {
+        console.warn(`No walkable path found to target (${preciseTargetX}, ${preciseTargetY})`);
+      }
+    }
     return;
   }
   
-  // Generate positions in a circle around the target point
+  // For multiple units, generate formation positions
   const positions = this.generateFormationPositions(preciseTargetX, preciseTargetY, this.selectedVillagers.length);
   
   // Assign each villager a position
   for (let i = 0; i < this.selectedVillagers.length; i++) {
     const targetPos = positions[i];
     if (targetPos) {
-      const tileX = Math.floor(targetPos.x);
-      const tileY = Math.floor(targetPos.y);
-      
-      if (this.gameMap.isTileWalkable(tileX, tileY)) {
-        this.moveVillagerTo(this.selectedVillagers[i], targetPos.x, targetPos.y);
-      } else {
-        // If position is not walkable, find a nearby walkable position
-        const nearbyPos = this.gameMap.getAdjacentWalkableTile(tileX, tileY);
-        if (nearbyPos) {
-          // Add some randomness to prevent villagers from stacking
-          const offsetX = 0.3 * (Math.random() - 0.5);
-          const offsetY = 0.3 * (Math.random() - 0.5);
-          this.moveVillagerTo(
-            this.selectedVillagers[i], 
-            nearbyPos.x + 0.5 + offsetX, 
-            nearbyPos.y + 0.5 + offsetY
-          );
-        }
-      }
+      // Move to formation position with path verification
+      this.moveVillagerTo(this.selectedVillagers[i], targetPos.x, targetPos.y);
     }
   }
 }
@@ -165,66 +209,113 @@ public moveSelectedVillagersToPoint(targetX: number, targetY: number): void {
 
   
 public updateVillagers(delta: number): void {
+  // Increment the path recalculation timer
+  this.pathRecalculationTimer += 1;
+  
+  // Check if we should recalculate paths this frame
+  const shouldCheckPaths = this.pathRecalculationEnabled && 
+                          (this.pathRecalculationTimer >= this.PATH_RECALCULATION_INTERVAL);
+  
+  // Reset timer if needed
+  if (shouldCheckPaths) {
+    this.pathRecalculationTimer = 0;
+  }
+  
   this.villagers.forEach(villager => {
-    // Update movement
+    // Check for collision detection first
+    if (this.collisionDetector) {
+      this.collisionDetector.checkVillagerCollision(villager);
+    }
+    
+    // Check if path needs recalculation
+    if (shouldCheckPaths && villager.moving && villager.path.length > 0 && this.dynamicPathfinder) {
+      // Let the dynamic pathfinder handle recalculation
+      this.dynamicPathfinder.recalculatePathIfNeeded(villager);
+    }
+    
+    // Continue with movement logic if villager is moving
     if (villager.moving && villager.path.length > 0) {
       const nextWaypoint = villager.path[0];
       
-      // Calculate precise movement
+      // Extra validation: check if next waypoint is walkable
+      const nextTileX = Math.floor(nextWaypoint.x);
+      const nextTileY = Math.floor(nextWaypoint.y);
+      
+      if (!this.gameMap.isTileWalkable(nextTileX, nextTileY)) {
+        // Next waypoint is no longer walkable, handle the obstacle
+        this.handleUnwalkableWaypoint(villager);
+        return; // Skip to next villager, will process movement next frame
+      }
+      
+      // Calculate movement parameters
       const dx = nextWaypoint.x - villager.x;
       const dy = nextWaypoint.y - villager.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
       
-      // Debugging log
-      console.log(`Villager position: (${villager.x}, ${villager.y})`);
-      console.log(`Next waypoint: (${nextWaypoint.x}, ${nextWaypoint.y})`);
-      console.log(`Distance to waypoint: ${distance}`);
-      
-
       // Move towards waypoint
-      if (distance < 0.01) { // Smaller tolerance for more precise movement
-        // Precisely set to the waypoint
+      if (distance < 0.01) {
+        // Reached waypoint, move to next one
         villager.x = nextWaypoint.x;
         villager.y = nextWaypoint.y;
         villager.path.shift();
         
-        // Update sprite position precisely
+        // Update sprite position
         const pos = this.isoUtils.toScreen(villager.x, villager.y);
-        console.log(`Logical position: (${villager.x}, ${villager.y}), Screen position: (${pos.x}, ${pos.y})`);
         villager.sprite.x = pos.x;
         villager.sprite.y = pos.y;
         
         // Check if path is complete
         if (villager.path.length === 0) {
-          // Ensure final position matches exactly
+          // Complete the movement
           villager.moving = false;
           villager.stateMachine.handleEvent(VillagerEvent.MOVE_COMPLETE);
           
           // Execute callback if exists
           if (villager.task && villager.task.type === 'move' && villager.task.callback) {
-            villager.task.callback();
-            villager.task = null; // Clear the task after execution
+            const callback = villager.task.callback;
+            villager.task = null;
+            callback(); // Execute callback after clearing task
           }
         }
       } else {
-        // Continue moving with improved smoothness
+        // Calculate how far to move this frame
         const speed = villager.speed * delta / 60;
         
-        // Calculate precise movement vector
+        // Calculate movement vector
         const angle = Math.atan2(dy, dx);
-        const moveX = Math.cos(angle) * speed;
-        const moveY = Math.sin(angle) * speed;
+        const moveX = Math.cos(angle) * Math.min(speed, distance);
+        const moveY = Math.sin(angle) * Math.min(speed, distance);
         
-        // Update precise grid position
-        villager.x += moveX;
-        villager.y += moveY;
+        // Calculate new position
+        const newX = villager.x + moveX;
+        const newY = villager.y + moveY;
         
-        // Precise screen position calculation
+        // Check if the move crosses an unwalkable tile
+        const currentTileX = Math.floor(villager.x);
+        const currentTileY = Math.floor(villager.y);
+        const newTileX = Math.floor(newX);
+        const newTileY = Math.floor(newY);
+        
+        // Check if we're crossing to a new tile
+        if (currentTileX !== newTileX || currentTileY !== newTileY) {
+          // Verify the move is valid
+          if (!this.gameMap.isMovementValid(villager.x, villager.y, newX, newY)) {
+            // Invalid movement, handle obstacle
+            this.handleUnwalkableWaypoint(villager);
+            return; // Skip to next villager
+          }
+        }
+        
+        // Update position
+        villager.x = newX;
+        villager.y = newY;
+        
+        // Update sprite position
         const pos = this.isoUtils.toScreen(villager.x, villager.y);
         villager.sprite.x = pos.x;
         villager.sprite.y = pos.y;
         
-        // Update zIndex based on y-coordinate for proper depth sorting
+        // Update zIndex for proper depth sorting
         villager.sprite.zIndex = Math.floor(villager.y * 10);
       }
     }
@@ -232,11 +323,58 @@ public updateVillagers(delta: number): void {
     // Update villager visuals
     this.updateVillagerVisuals(villager);
     
-    // Handle building tasks
+    // Handle building tasks if needed
     if (villager.stateMachine.getCurrentState() === VillagerState.BUILDING && villager.currentBuildTask) {
-      // Potential future handling of building tasks
+      // Building task logic (remains unchanged)
     }
   });
+}
+
+
+
+private handleUnwalkableWaypoint(villager: Villager): void {
+  console.log(`Obstacle detected for villager at (${villager.x.toFixed(2)}, ${villager.y.toFixed(2)})`);
+  
+  // Visualize the collision if detector is available
+  if (this.collisionDetector) {
+    this.collisionDetector.checkVillagerCollision(villager);
+  }
+  
+  if (this.dynamicPathfinder && this.pathRecalculationEnabled) {
+    // Attempt to recalculate a new path
+    const newPath = this.dynamicPathfinder.findPath(villager, villager.targetX, villager.targetY);
+    
+    if (newPath.length > 0) {
+      // Update path and continue movement
+      console.log(`Found new path with ${newPath.length} points`);
+      villager.path = newPath;
+    } else {
+      // No alternative path found, stop movement
+      console.warn(`No alternative path found, stopping movement`);
+      villager.moving = false;
+      villager.path = [];
+      villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
+      
+      // Execute callback if it exists (movement failed)
+      if (villager.task && villager.task.type === 'move' && villager.task.callback) {
+        const callback = villager.task.callback;
+        villager.task = null;
+        callback();
+      }
+    }
+  } else {
+    // Dynamic pathfinding not available, stop movement
+    villager.moving = false;
+    villager.path = [];
+    villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
+    
+    // Execute callback if it exists
+    if (villager.task && villager.task.type === 'move' && villager.task.callback) {
+      const callback = villager.task.callback;
+      villager.task = null;
+      callback();
+    }
+  }
 }
   
   // Assign villagers to build a foundation
@@ -319,49 +457,102 @@ public updateVillagers(delta: number): void {
     return false;
   }
 
-  public moveVillagerTo(villager: Villager, targetX: number, targetY: number, callback?: () => void): void {
-    // Use precise coordinates instead of clamping to integer grid positions
-    const clampedX = Math.max(0, Math.min(targetX, MAP_WIDTH - 0.05));
-    const clampedY = Math.max(0, Math.min(targetY, MAP_HEIGHT - 0.05));
-    
-    // Use the new sub-tile pathfinder
-    const pathFinder = new SubTilePathFinder(this.gameMap);
-    const path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY, {
-      diagonalMovement: true,
-      preciseTarget: true
-    });
-    
-    // If no path found, try finding an alternative target
-    if (path.length === 0) {
-      console.warn(`No path found to (${clampedX}, ${clampedY}), looking for alternatives`);
+  public moveVillagerTo(villager: Villager, targetX: number, targetY: number, callback?: () => void, recursionDepth: number = 0): void {
+    // Prevent infinite recursion by limiting depth
+    const MAX_RECURSION_DEPTH = 2;
+    if (recursionDepth > MAX_RECURSION_DEPTH) {
+      console.warn(`Maximum recursion depth reached for pathfinding. Aborting movement to (${targetX}, ${targetY})`);
       
-      // Try to get close to the target position without forcing integer coordinates
-      const targetTileX = Math.floor(clampedX);
-      const targetTileY = Math.floor(clampedY);
+      // If a callback was provided, call it to prevent operations from hanging
+      if (callback) callback();
       
-      // Check if the target tile itself is walkable
-      if (this.gameMap.isTileWalkable(targetTileX, targetTileY)) {
-        // Move to center of the target tile if we couldn't get to the exact position
-        console.log(`Moving to center of tile (${targetTileX + 0.5}, ${targetTileY + 0.5}) instead`);
-        return this.moveVillagerTo(villager, targetTileX + 0.5, targetTileY + 0.5, callback);
-      }
-      
-      // Otherwise find a nearby walkable tile and get as close as possible to the original target
-      const alternativeTile = this.gameMap.findAlternativeWalkableTile(targetTileX, targetTileY, 2);
-      
-      if (alternativeTile) {
-        // Use the center of the alternative tile as the new target
-        const centerX = alternativeTile.x + 0.5;
-        const centerY = alternativeTile.y + 0.5;
-        
-        console.log(`Found alternative path to (${centerX}, ${centerY})`);
-        return this.moveVillagerTo(villager, centerX, centerY, callback);
-      }
-      
-      console.error(`Could not find any path to destination`);
+      // Notify state machine
       villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
       return;
     }
+    
+    // Ensure target coordinates are within map bounds
+    const clampedX = Math.max(0, Math.min(targetX, MAP_WIDTH - 0.05));
+    const clampedY = Math.max(0, Math.min(targetY, MAP_HEIGHT - 0.05));
+    
+    // First check if the target tile is walkable
+    const targetTileX = Math.floor(clampedX);
+    const targetTileY = Math.floor(clampedY);
+    
+    // Debug info
+    console.log(`Attempting to move villager from (${villager.x.toFixed(2)}, ${villager.y.toFixed(2)}) to (${clampedX.toFixed(2)}, ${clampedY.toFixed(2)}), recursion: ${recursionDepth}`);
+    
+    // Check if we're already very close to the target (within same tile)
+    const currentTileX = Math.floor(villager.x);
+    const currentTileY = Math.floor(villager.y);
+    const isSameTile = currentTileX === targetTileX && currentTileY === targetTileY;
+    
+    if (isSameTile) {
+      // If we're already on the target tile, just move directly to the precise position
+      console.log(`Already on target tile, moving directly to precise position`);
+      
+      // Create a simple path with just the target point
+      villager.path = [{ x: clampedX, y: clampedY }];
+      villager.targetX = clampedX;
+      villager.targetY = clampedY;
+      villager.moving = true;
+      
+      // Set task
+      villager.task = {
+        type: 'move',
+        target: { x: clampedX, y: clampedY },
+        callback: callback
+      };
+      
+      // Trigger state machine event
+      villager.stateMachine.handleEvent(VillagerEvent.START_MOVE);
+      return;
+    }
+    
+    // Use the dynamic pathfinder if available
+    let path: GridPosition[] = [];
+    
+    if (this.dynamicPathfinder) {
+      // Use the enhanced pathfinder
+      path = this.dynamicPathfinder.findPath(villager, clampedX, clampedY);
+    } else {
+      // Fall back to the original pathfinder
+      const pathFinder = new SubTilePathFinder(this.gameMap);
+      path = pathFinder.findPath(villager.x, villager.y, clampedX, clampedY, {
+        diagonalMovement: true,
+        preciseTarget: true
+      });
+    }
+    
+    // If no path found, handle the failure gracefully
+    if (path.length === 0) {
+      console.warn(`Could not find any valid path from (${villager.x.toFixed(2)}, ${villager.y.toFixed(2)}) to (${clampedX.toFixed(2)}, ${clampedY.toFixed(2)})`);
+      
+      // Only try to find alternative if we haven't already recursed too deep
+      if (recursionDepth < MAX_RECURSION_DEPTH) {
+        // Try to find a nearby walkable position
+        const nearbyWalkable = this.gameMap.findNearestWalkableTile(targetTileX, targetTileY, 3);
+        
+        if (nearbyWalkable && 
+            (nearbyWalkable.x !== clampedX || nearbyWalkable.y !== clampedY)) {
+          console.log(`Found nearby walkable tile at (${nearbyWalkable.x}, ${nearbyWalkable.y}), using it instead`);
+          
+          // Try again with the nearby position, incrementing recursion depth
+          this.moveVillagerTo(villager, nearbyWalkable.x, nearbyWalkable.y, callback, recursionDepth + 1);
+          return;
+        }
+      }
+      
+      // If still no path, abort the movement
+      console.error(`No valid path found and no viable alternatives. Movement aborted.`);
+      villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
+      
+      // If a callback was provided, still call it so the operation doesn't hang
+      if (callback) callback();
+      return;
+    }
+    
+    // Path found successfully - set it up
     
     // Store the callback in the villager's task
     const task: VillagerTask = {
@@ -372,13 +563,16 @@ public updateVillagers(delta: number): void {
     
     villager.task = task;
     
-    // Set movement properties with exact coordinates
+    // Set movement properties
     villager.targetX = clampedX;
     villager.targetY = clampedY;
     villager.path = path;
+    villager.moving = true;
     
     // Trigger state machine events
     villager.stateMachine.handleEvent(VillagerEvent.START_MOVE);
+    
+    console.log(`Villager path set successfully with ${path.length} points`);
   }
   
 

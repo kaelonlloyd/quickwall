@@ -4,6 +4,7 @@ import { GridPosition, MapData, Tile, TileType, Villager} from '../types';
 import { IsometricUtils } from '../utils/IsometricUtils';
 import { WallManager, WallFoundation } from './WallManager';
 import { VillagerManager } from './Villager';
+import { CoordinateTransformer, RenderingMode } from '../utils/CoordinateTransformer';
 
 export class GameMap {
   private mapData: MapData;
@@ -12,22 +13,29 @@ export class GameMap {
   private isoUtils: IsometricUtils;
   private villagerManager: VillagerManager | null = null;
   public wallManager: WallManager | null = null;
+  private collisionVisualizationEnabled: boolean = false;
+  private transformer: CoordinateTransformer;  
 
   // Modified constructor - doesn't require VillagerManager or WallManager
   constructor(
     groundLayer: PIXI.Container, 
     objectLayer: PIXI.Container, 
-    isoUtils: IsometricUtils
+    isoUtils: IsometricUtils,
+    transformer: CoordinateTransformer
   ) {
     this.groundLayer = groundLayer;
     this.objectLayer = objectLayer;
     this.isoUtils = isoUtils;
-    
+    this.transformer = transformer;
     this.mapData = { tiles: [] };
     
     this.initMap();
   }
   
+
+  public setCollisionVisualization(enabled: boolean): void {
+    this.collisionVisualizationEnabled = enabled;
+  }
   // Setter methods for two-phase initialization
   public setVillagerManager(villagerManager: VillagerManager): void {
     this.villagerManager = villagerManager;
@@ -85,6 +93,18 @@ export class GameMap {
     this.drawMap();
   }
   
+
+  public redrawMap(): void {
+    console.log("Redrawing map with new rendering mode");
+    
+    // Clear existing layers
+    this.groundLayer.removeChildren();
+    this.objectLayer.removeChildren();
+    
+    // Redraw all tiles
+    this.drawMap();
+  }
+
   private drawMap(): void {
     console.log("Drawing map with size: ", MAP_WIDTH, MAP_HEIGHT);
     // Draw all tiles
@@ -97,64 +117,82 @@ export class GameMap {
     console.log("Total tiles created:", this.groundLayer.children.length);
   }
   
-  private drawTile(x: number, y: number): void {
-    const tile = this.mapData.tiles[y][x];
-    const pos = this.isoUtils.toScreen(x, y);
-    
-    // Create grass tile
-    const tileSprite = new PIXI.Graphics();
-    
-    // Draw isometric tile shape
-    tileSprite.beginFill(COLORS.GRASS);
-    
-    // Draw diamond shape
+ private drawTile(x: number, y: number): void {
+  const tile = this.mapData.tiles[y][x];
+  const pos = this.transformer.toScreen(x, y);
+  
+  // Create tile sprite
+  const tileSprite = new PIXI.Graphics();
+  
+  // Check current rendering mode
+  const isIsometric = this.transformer.getRenderingMode() === RenderingMode.ISOMETRIC;
+  
+  // Draw appropriate tile shape based on rendering mode
+  tileSprite.beginFill(COLORS.GRASS);
+  
+  if (isIsometric) {
+    // Draw diamond shape for isometric
     tileSprite.moveTo(0, TILE_HEIGHT / 2);
     tileSprite.lineTo(TILE_WIDTH / 2, 0);
     tileSprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
     tileSprite.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
     tileSprite.lineTo(0, TILE_HEIGHT / 2);
-    
-    tileSprite.endFill();
-    
-    // Add grid lines - thin and mostly transparent white
-    tileSprite.lineStyle(1, 0xFFFFFF, 0.2);
-    tileSprite.moveTo(0, TILE_HEIGHT / 2);
-    tileSprite.lineTo(TILE_WIDTH / 2, 0);
-    tileSprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
-    tileSprite.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
-    tileSprite.lineTo(0, TILE_HEIGHT / 2);
-    
-    tileSprite.x = pos.x;
-    tileSprite.y = pos.y;
-    
-    tileSprite.interactive = true;
-    tileSprite.cursor = 'pointer';
-    
-    // Type casting to add custom properties
-    (tileSprite as any).tileX = x;
-    (tileSprite as any).tileY = y;
-    
-    this.groundLayer.addChild(tileSprite);
-    
-    // Add objects based on tile type
-    if (tile.type !== TileType.GRASS && tile.type !== TileType.RUBBLE) {
-      const objectSprite = this.createTileObject(tile.type, pos.x, pos.y);
-      this.objectLayer.addChild(objectSprite);
-      tile.sprite = objectSprite
-
-      // Set the zIndex based on the y-coordinate for depth sorting
-      objectSprite.zIndex = y;
-    } else if (tile.type === TileType.RUBBLE) {
-      // Create rubble tile
-      this.createRubbleTile(x, y);
-    }
+  } else {
+    // Draw rectangle for orthogonal
+    tileSprite.drawRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
   }
+  
+  tileSprite.endFill();
+  
+  // Add grid lines
+  tileSprite.lineStyle(1, 0xFFFFFF, 0.2);
+  
+  if (isIsometric) {
+    // Diamond outline for isometric
+    tileSprite.moveTo(0, TILE_HEIGHT / 2);
+    tileSprite.lineTo(TILE_WIDTH / 2, 0);
+    tileSprite.lineTo(TILE_WIDTH, TILE_HEIGHT / 2);
+    tileSprite.lineTo(TILE_WIDTH / 2, TILE_HEIGHT);
+    tileSprite.lineTo(0, TILE_HEIGHT / 2);
+  } else {
+    // Rectangle outline for orthogonal
+    tileSprite.drawRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
+  }
+  
+  tileSprite.x = pos.x;
+  tileSprite.y = pos.y;
+  
+  tileSprite.interactive = true;
+  tileSprite.cursor = 'pointer';
+  
+  // Type casting to add custom properties
+  (tileSprite as any).tileX = x;
+  (tileSprite as any).tileY = y;
+  
+  this.groundLayer.addChild(tileSprite);
+  
+  // Add objects based on tile type
+  if (tile.type !== TileType.GRASS && tile.type !== TileType.RUBBLE) {
+    const objectSprite = this.createTileObject(tile.type, pos.x, pos.y);
+    this.objectLayer.addChild(objectSprite);
+    tile.sprite = objectSprite;
 
-  private createTileObject(type: TileType, x: number, y: number): PIXI.Graphics {
-    const objectSprite = new PIXI.Graphics();
-    
-    switch (type) {
-      case TileType.WALL:
+    // Set the zIndex based on the y-coordinate for depth sorting
+    objectSprite.zIndex = y;
+  } else if (tile.type === TileType.RUBBLE) {
+    // Create rubble tile
+    this.createRubbleTile(x, y);
+  }
+}
+
+private createTileObject(type: TileType, x: number, y: number): PIXI.Graphics {
+  const objectSprite = new PIXI.Graphics();
+  const isIsometric = this.transformer.getRenderingMode() === RenderingMode.ISOMETRIC;
+  
+  switch (type) {
+    case TileType.WALL:
+      if (isIsometric) {
+        // Isometric wall
         objectSprite.beginFill(COLORS.WALL);
         objectSprite.drawRect(TILE_WIDTH / 4, 0, TILE_WIDTH / 2, TILE_HEIGHT / 2);
         objectSprite.endFill();
@@ -163,15 +201,28 @@ export class GameMap {
         objectSprite.beginFill(COLORS.WALL_DETAIL);
         objectSprite.drawRect(TILE_WIDTH / 3, TILE_HEIGHT / 12, TILE_WIDTH / 3, TILE_HEIGHT / 6);
         objectSprite.endFill();
-        break;
+      } else {
+        // Orthogonal wall
+        objectSprite.beginFill(COLORS.WALL);
+        objectSprite.drawRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
+        objectSprite.endFill();
         
-      case TileType.TREE:
-        // Tree trunk - more centered and thinner
+        // Add some detail to the wall
+        objectSprite.beginFill(COLORS.WALL_DETAIL);
+        objectSprite.drawRect(TILE_WIDTH / 4, TILE_HEIGHT / 4, TILE_WIDTH / 2, TILE_HEIGHT / 2);
+        objectSprite.endFill();
+      }
+      break;
+      
+    case TileType.TREE:
+      if (isIsometric) {
+        // Isometric tree
+        // Tree trunk
         objectSprite.beginFill(COLORS.TREE_TRUNK);
         objectSprite.drawRect(TILE_WIDTH / 2 - 3, TILE_HEIGHT / 3, 6, TILE_HEIGHT / 3);
         objectSprite.endFill();
         
-        // Tree top (triangle shape, centered near top of tile)
+        // Tree top (triangle shape)
         objectSprite.beginFill(COLORS.TREE_LEAVES);
         objectSprite.drawPolygon([
           TILE_WIDTH / 2, TILE_HEIGHT / 6, // Top point
@@ -179,10 +230,23 @@ export class GameMap {
           TILE_WIDTH / 2 + 15, TILE_HEIGHT / 2  // Bottom right
         ]);
         objectSprite.endFill();
-        break;
+      } else {
+        // Orthogonal tree
+        // Tree trunk
+        objectSprite.beginFill(COLORS.TREE_TRUNK);
+        objectSprite.drawRect(TILE_WIDTH * 0.4, TILE_HEIGHT * 0.5, TILE_WIDTH * 0.2, TILE_HEIGHT * 0.5);
+        objectSprite.endFill();
         
-      case TileType.STONE:
-        // Center the stone
+        // Tree top (circle)
+        objectSprite.beginFill(COLORS.TREE_LEAVES);
+        objectSprite.drawCircle(TILE_WIDTH / 2, TILE_HEIGHT / 3, TILE_WIDTH * 0.3);
+        objectSprite.endFill();
+      }
+      break;
+      
+    case TileType.STONE:
+      if (isIsometric) {
+        // Isometric stone
         objectSprite.beginFill(COLORS.STONE);
         objectSprite.drawEllipse(TILE_WIDTH / 2, TILE_HEIGHT / 2, TILE_WIDTH / 3, TILE_HEIGHT / 4);
         objectSprite.endFill();
@@ -192,23 +256,41 @@ export class GameMap {
         objectSprite.drawEllipse(TILE_WIDTH / 3, TILE_HEIGHT / 2, TILE_WIDTH / 8, TILE_HEIGHT / 6);
         objectSprite.drawEllipse(TILE_WIDTH * 2/3, TILE_HEIGHT / 2.5, TILE_WIDTH / 7, TILE_HEIGHT / 7);
         objectSprite.endFill();
-        break;
-    }
-    
-    objectSprite.x = x;
-    objectSprite.y = y;
-    
-    // Make objects interactive so they can be clicked
-    objectSprite.interactive = true;
-    objectSprite.cursor = 'pointer';
-    
-    // Store the tile coordinates for reference
-    (objectSprite as any).tileX = Math.round((x - this.isoUtils.toScreen(0, 0).x) / TILE_WIDTH);
-    (objectSprite as any).tileY = Math.round((y - this.isoUtils.toScreen(0, 0).y) / TILE_HEIGHT);
-    
-    return objectSprite;
+      } else {
+        // Orthogonal stone
+        objectSprite.beginFill(COLORS.STONE);
+        objectSprite.drawEllipse(TILE_WIDTH / 2, TILE_HEIGHT / 2, TILE_WIDTH * 0.4, TILE_HEIGHT * 0.3);
+        objectSprite.endFill();
+        
+        // Add some details to the stone
+        objectSprite.beginFill(COLORS.STONE_DETAIL);
+        objectSprite.drawEllipse(TILE_WIDTH / 3, TILE_HEIGHT / 2, TILE_WIDTH * 0.1, TILE_HEIGHT * 0.1);
+        objectSprite.drawEllipse(TILE_WIDTH * 2/3, TILE_HEIGHT / 2.5, TILE_WIDTH * 0.1, TILE_HEIGHT * 0.1);
+        objectSprite.endFill();
+      }
+      break;
   }
   
+  objectSprite.x = x;
+  objectSprite.y = y;
+  
+  // Make objects interactive so they can be clicked
+  objectSprite.interactive = true;
+  objectSprite.cursor = 'pointer';
+  
+  // Calculate and store the tile coordinates for reference
+  if (isIsometric) {
+    (objectSprite as any).tileX = Math.round((x - this.transformer.toScreen(0, 0).x) / TILE_WIDTH);
+    (objectSprite as any).tileY = Math.round((y - this.transformer.toScreen(0, 0).y) / TILE_HEIGHT);
+  } else {
+    (objectSprite as any).tileX = Math.floor(x / TILE_WIDTH);
+    (objectSprite as any).tileY = Math.floor(y / TILE_HEIGHT);
+  }
+  
+  return objectSprite;
+}
+
+
   private createRubbleTile(x: number, y: number): void {
     const pos = this.isoUtils.toScreen(x, y);
     
@@ -253,6 +335,87 @@ export class GameMap {
         break;
       }
     }
+  }
+
+  public isMovementValid(fromX: number, fromY: number, toX: number, toY: number): boolean {
+    // If start or end is unwalkable, movement is invalid
+    if (!this.isTileWalkable(Math.floor(fromX), Math.floor(fromY)) || 
+        !this.isTileWalkable(Math.floor(toX), Math.floor(toY))) {
+      return false;
+    }
+    
+    // If start and end are in the same tile, movement is valid
+    if (Math.floor(fromX) === Math.floor(toX) && Math.floor(fromY) === Math.floor(toY)) {
+      return true;
+    }
+    
+    // If moving diagonally between tiles, check adjacent tiles for walkability
+    if (Math.floor(fromX) !== Math.floor(toX) && Math.floor(fromY) !== Math.floor(toY)) {
+      // Check both adjacent tiles to ensure we can move diagonally
+      const isAdjacentXWalkable = this.isTileWalkable(Math.floor(toX), Math.floor(fromY));
+      const isAdjacentYWalkable = this.isTileWalkable(Math.floor(fromX), Math.floor(toY));
+      
+      // Allow diagonal movement only if at least one adjacent tile is walkable
+      return isAdjacentXWalkable || isAdjacentYWalkable;
+    }
+    
+    // Horizontal or vertical movement is valid as long as both endpoints are walkable
+    return true;
+  }
+  
+  /**
+   * Find a walkable position near a target point with more sophisticated search
+   * This uses a spiral pattern to find the closest walkable position
+   */
+  public findNearestWalkableTile(targetX: number, targetY: number, maxRadius: number = 5): GridPosition | null {
+    // Check if the target itself is walkable
+    if (this.isTileWalkable(targetX, targetY)) {
+      return { x: targetX, y: targetY };
+    }
+    
+    // Spiral search pattern (more efficient than checking every tile in a square)
+    const directions = [
+      [0, -1], // Up
+      [1, 0],  // Right
+      [0, 1],  // Down
+      [-1, 0]  // Left
+    ];
+    
+    let x = Math.floor(targetX);
+    let y = Math.floor(targetY);
+    let direction = 0;
+    let stepsInDirection = 1;
+    let stepsTaken = 0;
+    let directionChanges = 0;
+    
+    for (let distance = 1; distance <= maxRadius; distance++) {
+      for (let i = 0; i < 2; i++) { // Two sides of the spiral per iteration
+        for (let step = 0; step < stepsInDirection; step++) {
+          // Move in the current direction
+          x += directions[direction][0];
+          y += directions[direction][1];
+          
+          // Check if this position is walkable
+          if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT && 
+              this.isTileWalkable(x, y)) {
+            // Return center of tile coordinates
+            return { x: x + 0.5, y: y + 0.5 };
+          }
+        }
+        
+        // Change direction
+        direction = (direction + 1) % 4;
+        directionChanges++;
+        
+        // Increase steps after completing a full spiral loop
+        if (directionChanges % 2 === 0) {
+          stepsInDirection++;
+        }
+      }
+    }
+    
+    // No walkable tile found within the given radius
+    return null;
   }
   
   public addWall(x: number, y: number): boolean {
@@ -492,6 +655,7 @@ public isTileWalkable(x: number, y: number): boolean {
   const floorX = Math.floor(x);
   const floorY = Math.floor(y);
   
+  // Out of bounds check
   if (floorX < 0 || floorX >= MAP_WIDTH || floorY < 0 || floorY >= MAP_HEIGHT) {
     return false;
   }
@@ -502,21 +666,111 @@ public isTileWalkable(x: number, y: number): boolean {
     return false;
   }
   
+  // Get tile data
   const tile = this.mapData.tiles[floorY][floorX];
   
-  // Handle different walkability scenarios
+  // Quick check for always walkable tile types
   if (tile.type === TileType.GRASS || tile.type === TileType.RUBBLE) {
+    // Do additional checking if needed (e.g., temporary obstacles)
+    // For now, grass and rubble are always walkable
     return true;
   }
   
-  // Check for wall foundations in unbuilt state
-  const foundation = this.findFoundationAtPosition(floorX, floorY);
-  if (foundation && foundation.status === 'foundation' && !foundation.isBuilding) {
-    return true;
+  // Wall tiles may or may not be walkable depending on construction state
+  if (tile.type === TileType.WALL) {
+    // Check if there's a foundation at this position and if it's in an unbuilt state
+    const foundation = this.findFoundationAtPosition(floorX, floorY);
+    
+    if (foundation) {
+      // Foundation is walkable only if it's not actively being built
+      return foundation.status === 'foundation' && !foundation.isBuilding;
+    }
+    
+    // Otherwise, walls are not walkable
+    return false;
   }
   
-  return false;
+  // Trees and stones are never walkable
+  if (tile.type === TileType.TREE || tile.type === TileType.STONE) {
+    return false;
+  }
+  
+  // Default to using the tile's walkable property for any other tile types
+  return tile.walkable;
 }
+
+public getUnwalkableTilesInRadius(centerX: number, centerY: number, radius: number): GridPosition[] {
+  const unwalkableTiles: GridPosition[] = [];
+  
+  // Check all tiles within the given radius
+  for (let y = Math.floor(centerY) - radius; y <= Math.floor(centerY) + radius; y++) {
+    for (let x = Math.floor(centerX) - radius; x <= Math.floor(centerX) + radius; x++) {
+      // Skip out of bounds tiles
+      if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
+        continue;
+      }
+      
+      // If the tile is not walkable, add it to the list
+      if (!this.isTileWalkable(x, y)) {
+        unwalkableTiles.push({ x, y });
+      }
+    }
+  }
+  
+  return unwalkableTiles;
+}
+
+
+
+private findSafePositionsAroundFoundation(foundation: WallFoundation): GridPosition[] {
+  const safePositions: GridPosition[] = [];
+  
+  // Check all adjacent tiles
+  const adjacentOffsets = [
+    [-1, -1], [-1, 0], [-1, 1],
+    [0, -1],           [0, 1],
+    [1, -1],  [1, 0],  [1, 1]
+  ];
+  
+  for (const offset of adjacentOffsets) {
+    const x = foundation.x + offset[0];
+    const y = foundation.y + offset[1];
+    
+    // Skip positions outside map bounds
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
+      continue;
+    }
+    
+    // Skip positions that are unwalkable
+    if (!this.isTileWalkable(x, y)) {
+      continue;
+    }
+    
+    // Check if this position is already occupied by another builder
+    const isOccupied = foundation.occupiedPositions.some(
+      pos => Math.abs(pos.x - x) < 0.5 && Math.abs(pos.y - y) < 0.5
+    );
+    
+    if (!isOccupied) {
+      // Add some slight randomness to prevent villagers from stacking
+      const offsetX = 0.2 * (Math.random() - 0.5);
+      const offsetY = 0.2 * (Math.random() - 0.5);
+      
+      safePositions.push({ 
+        x: x + 0.5 + offsetX, 
+        y: y + 0.5 + offsetY
+      });
+    }
+  }
+  
+  return safePositions;
+}
+
+/**
+ * Improved method for handling villagers on foundation tiles
+ */
+// In the findSafePositionsAroundFoundation method in GameMap.ts, 
+// we need to modify how we handle moveVillagerTo's result
 
 /**
  * Improved method for handling villagers on foundation tiles
@@ -528,31 +782,62 @@ public handleVillagersOnFoundation(foundation: WallFoundation): void {
   if (villagersOnTile.length > 0) {
     console.log(`${villagersOnTile.length} villagers found on foundation at (${foundation.x}, ${foundation.y})`);
     
+    let allCleared = true;
+    
     villagersOnTile.forEach((villager, index) => {
       // Check if this villager is assigned to build this foundation
       const isAssignedBuilder = villager.currentBuildTask && 
                                 villager.currentBuildTask?.type === 'wall' && 
                                 villager.currentBuildTask?.foundation?.x === foundation.x && 
                                 villager.currentBuildTask?.foundation?.y === foundation.y;
-                                
-
-                                
+      
       if (!isAssignedBuilder) {
         console.log(`Moving unassigned villager ${index} away from foundation`);
-        // Try to move the villager away
-        const moved = this.getVillagerManager().forceVillagerMove(villager);
         
-        if (!moved) {
-          // If we couldn't move the villager, prevent building
-          console.warn(`Couldn't move villager ${index}, pausing construction`);
-          foundation.isBuilding = false;
+        // Find a safe position to move the villager
+        const safePositions = this.findSafePositionsAroundFoundation(foundation);
+        
+        if (safePositions.length > 0) {
+          // Sort positions by distance to villager
+          safePositions.sort((a, b) => {
+            const distA = Math.sqrt(Math.pow(a.x - villager.x, 2) + Math.pow(a.y - villager.y, 2));
+            const distB = Math.sqrt(Math.pow(b.x - villager.x, 2) + Math.pow(b.y - villager.y, 2));
+            return distA - distB;
+          });
+          
+          // Try to move the villager to the closest safe position
+          // Since moveVillagerTo doesn't return a value, we need a different approach
+          try {
+            // Call moveVillagerTo without using its return value
+            this.ensureVillagerManager().moveVillagerTo(
+              villager, 
+              safePositions[0].x, 
+              safePositions[0].y
+            );
+            
+            // If no exception was thrown, assume success
+            // We could add a success flag here if needed in the future
+          } catch (error) {
+            // If an error occurred during movement, consider this villager not cleared
+            console.error(`Error moving villager ${index}:`, error);
+            allCleared = false;
+          }
+        } else {
+          // No safe positions found
+          console.warn(`No safe positions found around foundation at (${foundation.x}, ${foundation.y})`);
+          allCleared = false;
         }
       } else {
         console.log(`Villager ${index} is assigned to build this foundation, not moving`);
       }
     });
+    
+    foundation.villagersCleared = allCleared;
+  } else {
+    foundation.villagersCleared = true; // No villagers to clear
   }
 }
+
 
 /**
  * Get all villagers on a specific tile
