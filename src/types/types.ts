@@ -39,6 +39,7 @@ export interface VillagerTask {
 }
 
 export interface Villager {
+  id: string | null;
   sprite: PIXI.Container;
   selectionRing: PIXI.Graphics;
   x: number;

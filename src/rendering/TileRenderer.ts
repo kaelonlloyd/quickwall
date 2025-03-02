@@ -1,4 +1,4 @@
-// src/rendering/TileRenderer.ts
+// src/rendering/TileRenderer.ts - Updated for decoupled architecture
 import * as PIXI from 'pixi.js';
 import { COLORS, TILE_WIDTH, TILE_HEIGHT, MAP_WIDTH, MAP_HEIGHT } from '../constants';
 import { TileType } from '../types';
@@ -12,6 +12,7 @@ export class TileRenderer {
   private groundLayer: PIXI.Container;
   private transformer: CoordinateTransformer;
   private tileSprites: Map<string, PIXI.Graphics> = new Map();
+  private highlightedTiles: Set<string> = new Set();
 
   constructor(groundLayer: PIXI.Container, transformer: CoordinateTransformer) {
     this.groundLayer = groundLayer;
@@ -25,11 +26,16 @@ export class TileRenderer {
     // Clear existing tiles
     this.groundLayer.removeChildren();
     this.tileSprites.clear();
+    this.highlightedTiles.clear();
+    
+    // Get the map data
+    const mapData = gameMap.getMapData();
     
     // Draw all tiles
     for (let y = 0; y < MAP_HEIGHT; y++) {
       for (let x = 0; x < MAP_WIDTH; x++) {
-        this.renderTile(gameMap, x, y);
+        const tile = mapData.tiles[y][x];
+        this.renderTile(x, y, tile.type);
       }
     }
   }
@@ -37,10 +43,7 @@ export class TileRenderer {
   /**
    * Render a single tile
    */
-  private renderTile(gameMap: GameMap, x: number, y: number): void {
-    const tile = gameMap.getTile(x, y);
-    if (!tile) return;
-    
+  private renderTile(x: number, y: number, tileType: TileType): void {
     const pos = this.transformer.toScreen(x, y);
     
     // Create tile sprite
@@ -51,7 +54,7 @@ export class TileRenderer {
     
     // Set fill color based on tile type
     let fillColor = COLORS.GRASS;
-    if (tile.type === TileType.RUBBLE) {
+    if (tileType === TileType.RUBBLE) {
       fillColor = COLORS.STONE_DETAIL;
     }
     
@@ -107,7 +110,7 @@ export class TileRenderer {
     this.tileSprites.set(tileKey, tileSprite);
     
     // Add decoration for rubble tiles
-    if (tile.type === TileType.RUBBLE) {
+    if (tileType === TileType.RUBBLE) {
       this.addRubbleDecoration(tileSprite);
     }
   }
@@ -142,10 +145,17 @@ export class TileRenderer {
       this.groundLayer.removeChild(existingSprite);
       existingSprite.destroy();
       this.tileSprites.delete(tileKey);
+      
+      // Remove from highlighted tiles if needed
+      this.highlightedTiles.delete(tileKey);
     }
     
-    // Render the updated tile
-    this.renderTile(gameMap, x, y);
+    // Get the new tile type
+    const tile = gameMap.getTile(x, y);
+    if (tile) {
+      // Render the updated tile
+      this.renderTile(x, y, tile.type);
+    }
   }
 
   /**
@@ -157,6 +167,7 @@ export class TileRenderer {
     
     if (tileSprite) {
       tileSprite.tint = color;
+      this.highlightedTiles.add(tileKey);
     }
   }
 
@@ -169,7 +180,22 @@ export class TileRenderer {
     
     if (tileSprite) {
       tileSprite.tint = 0xFFFFFF;
+      this.highlightedTiles.delete(tileKey);
     }
+  }
+  
+  /**
+   * Clear all highlighted tiles
+   */
+  public clearAllHighlights(): void {
+    this.highlightedTiles.forEach(tileKey => {
+      const tileSprite = this.tileSprites.get(tileKey);
+      if (tileSprite) {
+        tileSprite.tint = 0xFFFFFF;
+      }
+    });
+    
+    this.highlightedTiles.clear();
   }
 
   /**

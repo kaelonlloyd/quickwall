@@ -34,6 +34,13 @@ export class CollisionDetector {
     }
   }
   
+
+  public get getIsEnabled(): boolean {
+    return this.isEnabled;
+  }
+  
+
+  
   /**
    * Check if a villager is currently on an unwalkable tile
    * @returns true if a collision is detected
@@ -55,6 +62,8 @@ export class CollisionDetector {
     
     return false;
   }
+
+  
   
   /**
    * Check if a path segment crosses any unwalkable tiles
@@ -120,8 +129,8 @@ export class CollisionDetector {
       fontFamily: 'Arial',
       fontSize: 12,
       fill: 0xFF0000,
-      stroke: 0x000000,
-      strokeThickness: 3
+      stroke: 0x000000//,
+      //strokeThickness: 3
     });
     
     label.x = pos.x + TILE_WIDTH / 2;

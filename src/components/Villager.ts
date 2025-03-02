@@ -1,4 +1,4 @@
-// src/components/Villager.ts - Updated to remove rendering logic
+// src/components/Villager.ts - With corrected Villager type
 import { VILLAGER_SPEED, MAP_HEIGHT, MAP_WIDTH } from '../constants';
 import { GridPosition, Villager, VillagerTask, BuildTask } from '../types';
 import { GameMap } from './Map';
@@ -10,6 +10,33 @@ import {
   VillagerStateContext 
 } from './VillagerStateMachine';
 
+/**
+ * Command pattern - defines possible villager commands
+ */
+export enum VillagerCommand {
+  SELECT = 'SELECT',
+  DESELECT = 'DESELECT',
+  TOGGLE_SELECTION = 'TOGGLE_SELECTION',
+  MOVE_TO = 'MOVE_TO',
+  MOVE_GROUP_TO = 'MOVE_GROUP_TO',
+  BUILD = 'BUILD',
+  GATHER = 'GATHER',
+  STOP = 'STOP',
+  CLEAR_SELECTION = 'CLEAR_SELECTION'
+}
+
+/**
+ * Command payload interface
+ */
+export interface CommandPayload {
+  villager?: Villager;
+  villagers?: Villager[];
+  position?: GridPosition;
+  addToSelection?: boolean;
+  foundation?: any;
+  target?: any;
+}
+
 export class VillagerManager {
   private villagers: Villager[] = [];
   private selectedVillagers: Villager[] = [];
@@ -19,19 +46,192 @@ export class VillagerManager {
   private pathRecalculationTimer: number = 0;
   private readonly PATH_RECALCULATION_INTERVAL: number = 20; // Check every 20 frames
   
+  // Command handlers registry
+  private commandHandlers: Map<VillagerCommand, (payload: CommandPayload) => void> = new Map();
+  
   constructor(gameMap: GameMap) {
     this.gameMap = gameMap;
+    this.initializeCommandHandlers();
+  }
+  
+  /**
+   * Initialize command handlers
+   */
+  private initializeCommandHandlers(): void {
+    // Register all command handlers
+    this.commandHandlers.set(VillagerCommand.SELECT, this.handleSelectCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.DESELECT, this.handleDeselectCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.TOGGLE_SELECTION, this.handleToggleSelectionCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.MOVE_TO, this.handleMoveToCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.MOVE_GROUP_TO, this.handleMoveGroupToCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.BUILD, this.handleBuildCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.GATHER, this.handleGatherCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.STOP, this.handleStopCommand.bind(this));
+    this.commandHandlers.set(VillagerCommand.CLEAR_SELECTION, this.handleClearSelectionCommand.bind(this));
+  }
+  
+  /**
+   * Execute a command on the villager system
+   * This is the main entry point for the input layer to interact with villager logic
+   */
+  public executeCommand(command: VillagerCommand, payload: CommandPayload = {}): void {
+    const handler = this.commandHandlers.get(command);
+    if (handler) {
+      handler(payload);
+    } else {
+      console.warn(`Unknown command: ${command}`);
+    }
+    
+    // Update selection count display after any command
+    this.updateSelectionCountDisplay();
+  }
+  
+  /**
+   * Handle villager selection input
+   * This is called from UI layer and translates the input to appropriate commands
+   */
+  public handleVillagerSelection(villager: Villager, addToSelection: boolean = false): void {
+    if (addToSelection) {
+      // Toggle selection state
+      if (this.selectedVillagers.includes(villager)) {
+        this.executeCommand(VillagerCommand.DESELECT, { villager });
+      } else {
+        this.executeCommand(VillagerCommand.SELECT, { villager, addToSelection: true });
+      }
+    } else {
+      // Clear selection and select just this villager
+      this.executeCommand(VillagerCommand.CLEAR_SELECTION);
+      this.executeCommand(VillagerCommand.SELECT, { villager });
+    }
+  }
+  
+  // Command handler implementations
+  
+  private handleSelectCommand(payload: CommandPayload): void {
+    const { villager, villagers, addToSelection = false } = payload;
+    
+    // If not adding to selection, clear the current selection first
+    if (!addToSelection) {
+      this.selectedVillagers = [];
+    }
+    
+    // Handle single villager selection
+    if (villager && !villagers) {
+      // Check if already selected
+      if (!this.selectedVillagers.includes(villager)) {
+        this.selectedVillagers.push(villager);
+        villager.stateMachine.handleEvent(VillagerEvent.SELECT);
+      }
+      return;
+    }
+    
+    // Handle multiple villager selection
+    if (villagers) {
+      villagers.forEach(v => {
+        // Check if already selected
+        if (!this.selectedVillagers.includes(v)) {
+          this.selectedVillagers.push(v);
+          v.stateMachine.handleEvent(VillagerEvent.SELECT);
+        }
+      });
+    }
+  }
+  
+  private handleDeselectCommand(payload: CommandPayload): void {
+    const { villager } = payload;
+    if (!villager) return;
+    
+    const index = this.selectedVillagers.indexOf(villager);
+    if (index !== -1) {
+      this.selectedVillagers.splice(index, 1);
+      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
+    }
+  }
+  
+  private handleToggleSelectionCommand(payload: CommandPayload): void {
+    const { villager } = payload;
+    if (!villager) return;
+    
+    if (this.selectedVillagers.includes(villager)) {
+      this.executeCommand(VillagerCommand.DESELECT, { villager });
+    } else {
+      this.executeCommand(VillagerCommand.SELECT, { villager, addToSelection: true });
+    }
+  }
+  
+  private handleMoveToCommand(payload: CommandPayload): void {
+    const { villager, position } = payload;
+    if (!villager || !position) return;
+    
+    this.moveVillagerTo(villager, position.x, position.y);
+  }
+  
+  private handleMoveGroupToCommand(payload: CommandPayload): void {
+    const { position } = payload;
+    if (!position) return;
+    
+    if (this.selectedVillagers.length > 0) {
+      this.moveSelectedVillagersToPoint(position.x, position.y);
+    }
+  }
+  
+  private handleBuildCommand(payload: CommandPayload): void {
+    const { villager, foundation } = payload;
+    if (!villager || !foundation) return;
+    
+    // Logic for assigning villager to foundation would go here
+    // This would typically involve pathfinding to the foundation and setting a build task
+  }
+  
+  private handleGatherCommand(payload: CommandPayload): void {
+    const { villager, target } = payload;
+    if (!villager || !target) return;
+    
+    // Logic for resource gathering would go here
+  }
+  
+  private handleStopCommand(payload: CommandPayload): void {
+    const { villager } = payload;
+    if (!villager) {
+      // If no specific villager, stop all selected villagers
+      this.selectedVillagers.forEach(v => {
+        v.moving = false;
+        v.path = [];
+        v.task = null;
+        v.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
+      });
+    } else {
+      // Stop specific villager
+      villager.moving = false;
+      villager.path = [];
+      villager.task = null;
+      villager.stateMachine.handleEvent(VillagerEvent.MOVE_INTERRUPTED);
+    }
+  }
+  
+  private handleClearSelectionCommand(): void {
+    // Deselect all villagers
+    this.selectedVillagers.forEach(villager => {
+      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
+    });
+    
+    // Clear selection array
+    this.selectedVillagers = [];
   }
   
   /**
    * Create a new villager (just logic, no rendering)
    */
   public createVillager(x: number, y: number): Villager {
+    // Get a unique identifier for the villager
+    const villagerId = this.villagers.length;
+    
     // Create villager data object without rendering properties
     const villager: Villager = {
-      id: `villager_${this.villagers.length}`,
       x: x,
       y: y,
+      pixelX: 0,  // These will be updated by the renderer
+      pixelY: 0,
       targetX: x,
       targetY: y,
       moving: false,
@@ -54,7 +254,6 @@ export class VillagerManager {
     villager.stateMachine = new VillagerStateMachine(stateMachineContext, {
       onStateChange: (from, to) => {
         console.log(`Villager state changed from ${from} to ${to}`);
-        // State change notifications can be implemented with events/callbacks
       }
     });
     
@@ -94,7 +293,7 @@ export class VillagerManager {
     
     // Check if we should recalculate paths this frame
     const shouldCheckPaths = this.pathRecalculationEnabled && 
-                            (this.pathRecalculationTimer >= this.PATH_RECALCULATION_INTERVAL);
+                           (this.pathRecalculationTimer >= this.PATH_RECALCULATION_INTERVAL);
     
     // Reset timer if needed
     if (shouldCheckPaths) {
@@ -414,43 +613,17 @@ export class VillagerManager {
   }
   
   /**
-   * Select a villager
+   * Legacy compatibility methods - now just delegate to command system
    */
   public selectVillager(villager: Villager, addToSelection: boolean = false): void {
-    // Clear previous selections if not adding to selection
-    if (!addToSelection) {
-      this.selectedVillagers = [];
-    }
-    
-    // Toggle selection for this villager
-    if (!this.selectedVillagers.includes(villager)) {
-      this.selectedVillagers.push(villager);
-      villager.stateMachine.handleEvent(VillagerEvent.SELECT);
-    } else if (addToSelection) {
-      // If already selected and adding to selection, deselect
-      const index = this.selectedVillagers.indexOf(villager);
-      this.selectedVillagers.splice(index, 1);
-      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
-    }
-    
-    // Update selection count display in UI
-    this.updateSelectionCountDisplay();
+    this.executeCommand(
+      addToSelection ? VillagerCommand.SELECT : VillagerCommand.TOGGLE_SELECTION, 
+      { villager, addToSelection }
+    );
   }
   
-  /**
-   * Clear villager selection
-   */
   public clearSelection(): void {
-    // Deselect all villagers
-    this.selectedVillagers.forEach(villager => {
-      villager.stateMachine.handleEvent(VillagerEvent.DESELECT);
-    });
-    
-    // Clear selection array
-    this.selectedVillagers = [];
-    
-    // Update selection count display
-    this.updateSelectionCountDisplay();
+    this.executeCommand(VillagerCommand.CLEAR_SELECTION);
   }
   
   /**

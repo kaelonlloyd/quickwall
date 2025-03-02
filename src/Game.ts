@@ -1,4 +1,4 @@
-// src/Game.ts - Updated with decoupled rendering
+// src/Game.ts - Fully decoupled rendering from game logic
 import * as PIXI from 'pixi.js';
 import { COLORS, MAP_HEIGHT, MAP_WIDTH } from './constants';
 import { Resources } from './types';
@@ -11,21 +11,30 @@ import { BuildingManager } from './components/Building';
 import { WallManager } from './components/WallManager';
 import { PathVisualizer } from './utils/PathVisualizer';
 import { RenderingToggle } from './components/RenderingToggle';
-import { VillagerEvent } from './components/VillagerStateMachine';
+import { DynamicPathfinder } from './utils/DynamicPathfinder';
+import { IsometricUtils } from './utils/IsometricUtils';
+import { CollisionDetector } from './utils/CollisionDetector';
 
 export class Game {
   private app!: PIXI.Application;
   private worldContainer!: PIXI.Container;
+
+
   
   // Rendering system
   private renderingSystem!: RenderingSystem;
   
-  // Game components
+  // Game components (pure logic)
   private resourceManager!: ResourceManager;
   private gameMap!: GameMap;
   private villagerManager!: VillagerManager;
   private buildingManager!: BuildingManager;
   private wallManager!: WallManager;
+  
+  // Utilities
+  private isoUtils!: IsometricUtils;
+  private dynamicPathfinder!: DynamicPathfinder;
+  private collisionDetector!: CollisionDetector;
   
   // UI components
   private renderingToggle!: RenderingToggle;
@@ -33,7 +42,7 @@ export class Game {
   
   // Game state
   private showBuildTimes: boolean = false;
-  private showSubTileGrid: boolean = false;
+  private isShiftKeyDown: boolean = false;
   
   constructor() {
     // Create PixiJS Application
@@ -43,7 +52,7 @@ export class Game {
     this.initializeApp().catch(console.error);
   }
 
-  // Initialize the application with decoupled rendering
+  // Initialize the application with fully decoupled rendering
   private async initializeApp(): Promise<void> {
     // Initialize with options
     await this.app.init({
@@ -75,47 +84,38 @@ export class Game {
     this.worldContainer.x = this.app.screen.width / 2;
     this.worldContainer.y = this.app.screen.height / 4;
     
-    // Initialize the rendering system - this creates all the layers
+
+    // Create isometric utilities
+    this.isoUtils = new IsometricUtils(this.worldContainer.x, this.worldContainer.y);
+    
+    // Initialize the rendering system
     this.renderingSystem = new RenderingSystem(this.worldContainer, RenderingMode.ISOMETRIC);
     
+
+    // Initialize game components (pure logic)
+    await this.initializeGameComponents(this.renderingSystem.getTransformer());
+
+
     // Initialize path visualizer for debugging
     this.pathVisualizer = new PathVisualizer(
       this.worldContainer, 
       this.renderingSystem.getTransformer()
     );
     
-    // Initial resources
-    const initialResources: Resources = {
-      wood: 100,
-      stone: 50
-    };
-    
-    this.resourceManager = new ResourceManager(initialResources);
-    
-    // Create the wall manager - now without rendering responsibilities
-    this.wallManager = new WallManager();
-    
-    // Create the game map - now without rendering responsibilities
-    this.gameMap = new GameMap();
-    
-    // Set the wall manager in the game map
-    this.gameMap.setWallManager(this.wallManager);
-    
-    // Create the villager manager - now without rendering responsibilities
-    this.villagerManager = new VillagerManager(this.gameMap);
-    
-    // Make sure the GameMap knows about the VillagerManager
-    this.gameMap.setVillagerManager(this.villagerManager);
-    
-    // Create the building manager
-    this.buildingManager = new BuildingManager(this.gameMap, this.resourceManager, this.villagerManager);
-    
-    // Initialize the rendering toggle
-    this.renderingToggle = new RenderingToggle(
-      this.renderingSystem.getTransformer(),
-      this.handleRenderingModeChange.bind(this)
+
+    // Initialize collision detector
+    this.collisionDetector = new CollisionDetector(
+      this.gameMap,
+      this.isoUtils,
+      this.renderingSystem.getLayers().uiLayer
     );
-    this.renderingToggle.addShortcutToInstructions();
+    
+    // Set up dynamic pathfinder
+    this.dynamicPathfinder = new DynamicPathfinder(this.gameMap, this.pathVisualizer);
+    this.villagerManager.setPathfinder(this.dynamicPathfinder);
+    
+    // Set up UI components
+    this.setupUI();
     
     // Set up event handlers
     this.setupEventHandlers();
@@ -127,81 +127,146 @@ export class Game {
     window.addEventListener('resize', this.onResize.bind(this));
     
     // Initialize game state
-    this.initGame();
+    this.initGameState();
     
     // Do the initial rendering of the game state
     this.renderingSystem.renderGameState(this.gameMap, this.villagerManager, this.wallManager);
+    
+    console.log("Game fully initialized with decoupled rendering");
+  }
+
+  /**
+   * Initialize the core game components (pure logic, no rendering)
+   */
+  private async initializeGameComponents(transformer: CoordinateTransformer): Promise<void> {
+    // Create the game components in the correct order with proper dependencies
+    
+    // 1. Initial resources
+    const initialResources: Resources = {
+      wood: 100,
+      stone: 50
+    };
+    this.resourceManager = new ResourceManager(initialResources);
+    
+    // 2. Create the wall manager (pure logic)
+    this.wallManager = new WallManager();
+    
+    // 3. Create the game map (pure logic)
+    this.gameMap = new GameMap();
+    
+    // 4. Set dependencies on the game map
+    this.gameMap.setWallManager(this.wallManager);
+    
+    // 5. Create the villager manager (pure logic)
+    this.villagerManager = new VillagerManager(this.gameMap);
+    
+    // 6. Set the villager manager in the game map
+    this.gameMap.setVillagerManager(this.villagerManager);
+    
+    // 7. Create the building manager
+    this.buildingManager = new BuildingManager(
+      this.gameMap, 
+      this.resourceManager, 
+      this.villagerManager
+    );
+    
+    // Initialize the map
+    this.gameMap.initMap();
+    
+    console.log("Game components initialized");
+  }
+  
+  /**
+   * Set up UI components
+   */
+  private setupUI(): void {
+    // Initialize the rendering toggle
+    this.renderingToggle = new RenderingToggle(
+      this.renderingSystem.getTransformer(),
+      this.handleRenderingModeChange.bind(this)
+    );
+    this.renderingToggle.addShortcutToInstructions();
+    
+    // Set up UI handlers for build time toggle
+    this.renderingSystem.getWallRenderer().setShowBuildTimes(this.showBuildTimes);
+    
+    // Create selection count display
+    this.createSelectionCountDisplay();
   }
 
   /**
    * Set up event handlers for user interaction
    */
   private setupEventHandlers(): void {
+    // Track keyboard state
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Shift') {
+        this.isShiftKeyDown = true;
+      }
+      
+      // Toggle collision detection visualization with C key
+      if (e.key === 'c' || e.key === 'C') {
+        this.collisionDetector.setEnabled(!this.collisionDetector.getIsEnabled);
+      }
+      
+      // Toggle path visualization with P key
+      if (e.key === 'p' || e.key === 'P') {
+        this.pathVisualizer.setDebugEnabled(!this.pathVisualizer.isDebugEnabled());
+      }
+    });
+    
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'Shift') {
+        this.isShiftKeyDown = false;
+      }
+    });
+    
+    // Provide the shift key state to the UI manager
+    const uiManager = this.renderingSystem.getUIManager();
+    if (uiManager) {
+      uiManager.setShiftKeyHandler(() => this.isShiftKeyDown);
+      
+      // Set up build time toggle handler
+      uiManager.setBuildTimeToggleHandler((enabled) => {
+        this.showBuildTimes = enabled;
+        this.renderingSystem.getWallRenderer().setShowBuildTimes(enabled);
+      });
+    }
+    
+    // Set up click handling for various game elements
+    this.setupClickHandlers();
+  }
+  
+  /**
+   * Set up click handlers for game elements
+   */
+  private setupClickHandlers(): void {
     // Get renderers
     const tileRenderer = this.renderingSystem.getTileRenderer();
     const villagerRenderer = this.renderingSystem.getVillagerRenderer();
     const wallRenderer = this.renderingSystem.getWallRenderer();
+    const uiManager = this.renderingSystem.getUIManager();
     
-    // Set up tile click handler
-    tileRenderer.setTileClickHandler((x, y, event) => {
-      const nativeEvent = event.nativeEvent as PointerEvent;
-      
-      // Check for wall build mode first
-      if (this.buildingManager.getBuildMode() === 'wall') {
-        // Check if shift key is down
-        const isShiftDown = nativeEvent.shiftKey;
-        
-        if (nativeEvent.button === 0) { // Left click in build mode
-          this.buildingManager.handleTileClick(x, y, isShiftDown);
-          return;
-        }
-      }
-      
-      // Handle normal tile clicks
-      if (nativeEvent.button === 0) { // Left click
-        // Check if Ctrl key is pressed for multi-selection
-        const isCtrlPressed = nativeEvent.ctrlKey || nativeEvent.metaKey;
-        this.handleLeftClick(x, y, isCtrlPressed);
-      } else if (nativeEvent.button === 2) { // Right click
-        this.handleRightClick(x, y, event.global.x, event.global.y);
-      }
-    });
-    
-    // Set up tile hover handlers
-    tileRenderer.setTileHoverHandlers(
-      // Hover in
-      (x, y) => {
-        // If in wall build mode, provide visual feedback
-        if (this.buildingManager.getBuildMode() === 'wall') {
-          // Check if wall can be placed
-          const canPlaceWall = this.gameMap.getTile(x, y)?.type !== 3 && // Not TREE
-                              this.gameMap.getTile(x, y)?.type !== 4 && // Not STONE
-                              this.gameMap.getTile(x, y)?.type !== 1;   // Not WALL
-          
-          // Visual indication based on placement possibility
-          tileRenderer.highlightTile(x, y, canPlaceWall ? 0x00FF00 : 0xFF0000);
-        } else {
-          tileRenderer.highlightTile(x, y, 0xDDDDDD);
-        }
-      },
-      // Hover out
-      (x, y) => {
-        tileRenderer.clearHighlight(x, y);
-      }
-    );
+    // Connect UI manager to the game components
+    if (uiManager) {
+      uiManager.connectToGameComponents(
+        this.gameMap,
+        this.villagerManager,
+        this.buildingManager
+      );
+    }
     
     // Set up villager click handler
     villagerRenderer.setVillagerClickHandler((villager, event) => {
       const nativeEvent = event.nativeEvent as PointerEvent;
       const isCtrlPressed = nativeEvent.ctrlKey || nativeEvent.metaKey;
       
-      this.villagerManager.selectVillager(villager, isCtrlPressed);
+      // Handle selection in the villager manager (pure logic)
+      this.villagerManager.handleVillagerSelection(villager, isCtrlPressed);
       
-      // Update visual selection state
-      villagerRenderer.updateVillagerSelection(
-        villager, 
-        this.villagerManager.getSelectedVillagers().includes(villager)
-      );
+      // Update visual selection state (rendering)
+      const isSelected = this.villagerManager.getSelectedVillagers().includes(villager);
+      villagerRenderer.updateVillagerSelection(villager, isSelected);
     });
     
     // Set up wall foundation click handler
@@ -221,85 +286,23 @@ export class Game {
   private handleRenderingModeChange(newMode: RenderingMode): void {
     console.log(`Rendering mode changed to ${newMode}`);
     
+    // Update the isometric utils world position
+    const worldPos = this.renderingSystem.getTransformer().getWorldPosition();
+    this.isoUtils.updateWorldPosition(worldPos.x, worldPos.y);
+    
     // Refresh all visuals with the new rendering mode
     this.renderingSystem.refreshAllVisuals(this.gameMap, this.villagerManager, this.wallManager);
   }
 
   /**
-   * Handle left-click on tiles
+   * Initialize the game state (create initial entities)
    */
-  private handleLeftClick(x: number, y: number, isCtrlPressed: boolean): void {
-    console.log(`Left click - Coordinates: x=${x}, y=${y}`);
-    
-    // Check if we're in build mode
-    if (this.buildingManager.getBuildMode() === 'wall') {
-      const isShiftDown = false; // We'd get this from a keyboard state tracker
-      this.buildingManager.handleTileClick(x, y, isShiftDown);
-      return;
-    }
-    
-    // Check if there's a villager at this position
-    const villagerAtPosition = this.villagerManager.findVillagerAtPosition(x, y);
-    
-    if (villagerAtPosition) {
-      this.villagerManager.selectVillager(villagerAtPosition, isCtrlPressed);
-      
-      // Update visual selection state
-      this.renderingSystem.getVillagerRenderer().updateVillagerSelection(
-        villagerAtPosition, 
-        this.villagerManager.getSelectedVillagers().includes(villagerAtPosition)
-      );
-    } else {
-      // If no villager, deselect all (unless Ctrl is pressed)
-      if (!isCtrlPressed) {
-        this.villagerManager.clearSelection();
-        
-        // Update all villager visuals to reflect deselection
-        this.villagerManager.getAllVillagers().forEach(villager => {
-          this.renderingSystem.getVillagerRenderer().updateVillagerSelection(villager, false);
-        });
-      }
-    }
-  }
-
-  /**
-   * Handle right-click on tiles
-   */
-  private handleRightClick(x: number, y: number, mouseX: number, mouseY: number): void {
-    console.log(`Right click - Coordinates: x=${x}, y=${y}, Screen: (${mouseX}, ${mouseY})`);
-    
-    // Get the precise sub-tile position
-    const transformer = this.renderingSystem.getTransformer();
-    const preciseIsoPosition = transformer.getPrecisePositionFromScreen(mouseX, mouseY);
-    
-    const selectedVillagers = this.villagerManager.getSelectedVillagers();
-    
-    // If we have villagers selected, right-click on ground moves them
-    if (selectedVillagers.length > 0) {
-      // Move all selected villagers as a group to the precise position
-      this.villagerManager.moveSelectedVillagersToPoint(
-        preciseIsoPosition.x, 
-        preciseIsoPosition.y
-      );
-    } else {
-      // If no villagers selected, open build menu
-      this.buildingManager.showBuildMenu(mouseX, mouseY);
-    }
-  }
-
-  /**
-   * Initialize the game state
-   */
-  private initGame(): void {
-    console.log("Game initialization started");
-    
-    // Create initial map
-    this.gameMap.initMap();
+  private initGameState(): void {
+    console.log("Initializing game state");
     
     // Create initial villagers at nearby positions
     const startX = Math.floor(MAP_WIDTH / 2);
     const startY = Math.floor(MAP_HEIGHT / 2);
-    console.log("Creating villagers at center area");
     
     // Create the initial villager
     const villager1 = this.villagerManager.createVillager(startX, startY);
@@ -314,8 +317,12 @@ export class Game {
     setInterval(() => {
       this.resourceManager.addResources(1, 1);
     }, 3000);
-    
-    // Create selection count display
+  }
+  
+  /**
+   * Create selection count display
+   */
+  private createSelectionCountDisplay(): void {
     const selectionCountElement = document.createElement('div');
     selectionCountElement.id = 'villager-selection-count';
     selectionCountElement.textContent = 'Villagers: 1';
@@ -331,8 +338,6 @@ export class Game {
     selectionCountElement.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
     selectionCountElement.style.borderRadius = '3px';
     document.body.appendChild(selectionCountElement);
-    
-    console.log("Game initialization completed");
   }
 
   /**
@@ -346,6 +351,9 @@ export class Game {
       
       // Update transformer with new world position
       this.renderingSystem.updateWorldPosition(this.worldContainer.x, this.worldContainer.y);
+      
+      // Update isometric utils
+      this.isoUtils.updateWorldPosition(this.worldContainer.x, this.worldContainer.y);
     }
   }
 
@@ -356,21 +364,67 @@ export class Game {
     // Calculate delta time for consistent updates
     const delta = ticker.deltaTime;
     
-    // Update game logic
+    // Update game logic (no rendering concerns)
+    this.updateGameLogic(delta);
+    
+    // Update rendering system (only rendering concerns)
+    this.updateRendering(delta);
+  }
+  
+  /**
+   * Update game logic (no rendering)
+   */
+  private updateGameLogic(delta: number): void {
+    // Update villager movement and actions
     this.villagerManager.updateVillagers(delta);
+    
+    // Update building construction
     this.wallManager.updateFoundationBuilding(delta);
     
-    // Update renderers
+    // Check for collisions (debug feature)
+    if (this.collisionDetector.getIsEnabled) {
+      this.villagerManager.getAllVillagers().forEach(villager => {
+        this.collisionDetector.checkVillagerCollision(villager);
+      });
+    }
+  }
+  
+  /**
+   * Update rendering (no game logic)
+   */
+  private updateRendering(delta: number): void {
+    // Update all visual components through the rendering system
     this.renderingSystem.update(delta);
     
-    // Update path visualizations if enabled
+    // Update movement visualization for selected villagers
     if (this.pathVisualizer.isDebugEnabled()) {
       this.updatePathVisualizations();
     }
+    
+    // Sync villager visuals with their current state
+    this.syncVillagerVisuals();
+  }
+  
+  /**
+   * Sync villager visuals with their logical state
+   */
+  private syncVillagerVisuals(): void {
+    const villagers = this.villagerManager.getAllVillagers();
+    const villagerRenderer = this.renderingSystem.getVillagerRenderer();
+    
+    villagers.forEach(villager => {
+      // Update position
+      villagerRenderer.updateVillagerPosition(villager);
+      
+      // Update visual state based on logical state
+      villagerRenderer.updateVillagerVisuals(villager);
+    });
   }
 
+
+
   /**
-   * Update visualization of villager paths
+   * Update visualization of villager paths (debug feature)
    */
   private updatePathVisualizations(): void {
     if (!this.pathVisualizer.isDebugEnabled()) return;
@@ -390,8 +444,8 @@ export class Game {
         // Generate a stable ID for this villager's path
         const pathId = `villager_${index}_path`;
         
-        // Visualize the path with its unique ID
-        this.pathVisualizer.visualizePath(fullPath, color, pathId);
+        // Visualize the path
+        this.pathVisualizer.visualizePath(fullPath, color);
       }
     });
   }
